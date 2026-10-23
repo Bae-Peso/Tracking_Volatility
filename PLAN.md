@@ -447,7 +447,7 @@ accu_weather/
 ### 7.3 crontab
 
 ```
-*/30 * * * *  /home/baepeso/Programming/accu_weather/run.sh
+*/30 * * * *  /.../Tracking_Volatility/accu_weather/run.sh
 ```
 
 - 수집 줄은 `./run.sh install`로 등록, `./run.sh uninstall`로 제거한다 (run.sh 줄만 교체, 다른 crontab 줄은 유지).
