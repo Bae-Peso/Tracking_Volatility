@@ -1,6 +1,7 @@
 {
   "lang_name": "日本語",
   "app_title": "予報の変動",
+  "attribution": "Weather data by Open-Meteo.com",
   "aria_lang": "言語",
   "aria_mode": "表示モード",
   "mode_calendar": "カレンダー",

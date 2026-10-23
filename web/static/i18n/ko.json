@@ -1,6 +1,7 @@
 {
   "lang_name": "한국어",
   "app_title": "예보 변동성",
+  "attribution": "Weather data by Open-Meteo.com",
   "aria_lang": "언어",
   "aria_mode": "표시 모드",
   "mode_calendar": "달력",

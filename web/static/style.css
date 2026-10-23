@@ -74,7 +74,9 @@ h2 { font-size: 16px; margin: 0; }
   display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 16px;
   background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5;
 }
-.lang { margin-left: auto; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px; }
+.attribution { margin-left: auto; font-size: 12px; color: var(--muted); }
+.attribution:hover { color: var(--text-2); }
+.lang { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px; }
 .error { margin: 12px 16px 0; padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--critical); }
 .fail-banner {
   display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 12px 16px 0; padding: 8px 12px;

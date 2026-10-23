@@ -430,7 +430,9 @@ accu_weather/
 - 매 실행 결과(저장 행 수, 실패)는 `logs/YYYY-MM.log`에 기록한다. 실패는 `error_log` 테이블에도 남긴다 (4.4).
 - 수집 실패 알림(메일·메신저)은 두지 않는다. 웹 조회를 만들면 `error_log`의 미확인 항목을 알림으로 보여준다.
 
-### 7.4 백업 (방향만 정함)
+### 7.4 백업 (보류)
+
+백업 위치(다른 드라이브, NAS 공유 폴더, 클라우드)는 사용자마다 달라서 기능으로 넣지 않고 보류한다. 아래는 정해 둔 방향.
 
 - **시점**: 수집이 실제로 저장한 실행 뒤에 한다 (도시마다 현지 22시가 달라서 고정 시각 대신 "저장 직후").
   run.sh에서 collect가 저장한 경우에만 이어서 백업을 돌린다.
@@ -528,7 +530,7 @@ docker compose run --rm collector city export data/cities.txt   # 컨테이너 �
 | 2 | ✅ run.sh + crontab 등록 (`./run.sh install`, 30분 간격, 도시별 현지 22시 판단) | **가능한 빨리 가동** (강수확률·가시거리는 과거 데이터로 소급 불가) |
 | 3 | ✅ 하루 통합 | 22시 실행 후 `slot='day'` 행 생성 |
 | 4 | 정확도 (n일전 vs d0) + error_log + 테스트 | ✅ 구현. 가동 다음 날부터 1일전 행이 생기고, 15일 뒤 1~14일전이 다 참 |
-| 5 | recompute ✅ + 설치 TUI ✅ + 백업 (7.4) | 백업 위치 정하고 수집 뒤에 연결 |
+| 5 | recompute ✅ + 설치 TUI ✅ + 백업 (7.4, 보류) | 백업 위치는 사용자마다 달라 보류 |
 | 5.5 | Docker 이전 (7.6) | `docker compose up -d` 후 현지 22시 수집이 logs에 찍힘 |
 | 6 | ✅ 웹 조회 (nginx + Flask, 7.5) | 브라우저에서 달력·일간·그래프 확인 |
 | 선택 | wttr.in 어댑터, 실제 관측값 비교 | 필요해지면 |
@@ -545,7 +547,8 @@ docker compose run --rm collector city export data/cities.txt   # 컨테이너 �
 - 수집 실패: 로그 파일 + error_log 테이블, 알림은 웹에서 (미확인만 표시)
 - 테스트: `python3 -m unittest`
 - 설치: `python3 -m accu_weather setup` (curses TUI, 언어 → 소개 → 자동 실행 안내 → 도시 추가 → 설치)
-- 백업: 저장 직후 `.backup` 사본 → rsync(다른 드라이브) 또는 클라우드, 세부는 미정
+- 백업: 보류 (위치가 사용자마다 다름). 방향은 저장 직후 `.backup` 사본 → rsync(다른 드라이브) 또는 클라우드
+- 데이터 출처 표기: Open-Meteo는 CC BY 4.0 → 웹 상단과 README에 "Weather data by Open-Meteo.com" 링크
 - 실행 환경: 일반 리눅스 PC + Docker. 수집 컨테이너가 직접 30분마다 실행 (7.6)
 - 작업 순서: Docker 먼저, 그다음 웹(compose에 서비스 추가)
 - 웹: Flask, 읽기 전용, 로그인 없음. 공개 범위는 미정 → 우선 집 안 기준, 외부 공개 시 nginx에 HTTPS·인증

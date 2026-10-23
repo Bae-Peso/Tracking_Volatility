@@ -1,6 +1,7 @@
 {
   "lang_name": "English",
   "app_title": "Forecast volatility",
+  "attribution": "Weather data by Open-Meteo.com",
   "aria_lang": "Language",
   "aria_mode": "Display mode",
   "mode_calendar": "Calendar",
