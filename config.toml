@@ -1,0 +1,9 @@
+# accu_weather 설정. 지운 항목은 기본값을 쓴다.
+
+[collect]
+fetch_hour = 22       # 도시 현지 시각으로 이 시각 이후 첫 수집분을 그날의 확정 예보로 본다 (~23:59까지 재시도)
+forecast_days = 15    # 오늘 + 14일 (Open-Meteo 최대 16)
+
+[paths]
+db = "data/weather.sqlite3"
+cities = "cities.txt"  # city export/import 기본 파일
