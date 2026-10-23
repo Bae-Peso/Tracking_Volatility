@@ -189,7 +189,7 @@ CREATE TABLE accuracy (
   precip_log_range  REAL,             -- log1p(강수량 최댓값) − log1p(강수량 최솟값)
   weather_changes   INTEGER,          -- 하루 전 예보 대비 날씨가 바뀐 횟수 (d14→d13 … d1→d0)
   weather_change_rate REAL,           -- weather_changes / (n_forecasts − 1)
-  weather_severity  REAL,             -- 0~1, 날씨 변화의 심각도 (감점표 기준, 5.1 참고)
+  weather_severity  REAL,             -- 0~1, 날씨 변화의 심각도 (weather_severity.json 기준, 5.1 참고)
   stability_score   REAL,             -- 0~100, 높을수록 예보가 안 바뀜
   computed_at       TEXT    NOT NULL,
   PRIMARY KEY (city_id, target_date, source)
@@ -209,7 +209,12 @@ CREATE TABLE accuracy (
 
 - **온도**: 0℃ 차이를 best, 5℃ 이상 차이를 worst로 판단함
 - **날씨**: 맑음 → 구름처럼 생활에 큰 영향이 없는 변화는 감점을 적게, 맑음 → 호우·뇌우처럼 극단적인 변화는 감점을 크게 준다.
-  카테고리 번호 차이는 심각도 순서가 아니므로 6×6 감점표(0~1)를 따로 둔다. **감점표 값은 추후 확정 (TODO)**
+  WMO 코드마다 평면 좌표 (x=종류 0~5, y=강도 1~3)를 `weather_severity.json`에 둔다.
+  (WMO 번호의 두 자리를 그대로 쓰면 80=0점, 77 싸라기눈 > 75 강한 눈처럼 순서가 깨지므로 좌표를 직접 지정)
+  - x: 0 맑음, 1 구름, 2 안개·이슬비, 3 비·소나기, 4 눈·어는 비, 5 뇌우 / y: 1 약, 2 보통, 3 강
+  - 가중치 `w = x·y / 15 × 5` (원점~(x,y) 직사각형 넓이, 최대 5)
+  - 두 예보 사이 감점 = `|w_a − w_b| / 5` (넓이가 이미 제곱처럼 커지므로 지수 없이 사용)
+  - `weather_severity` = d14~d0 중 w 최댓값과 최솟값의 감점 (다른 항목처럼 범위 기준)
 - **강우량**: 0 → 1mm와 10 → 11mm는 체감이 다르므로 **로그 척도**(`log1p(mm)`)로 차이를 잰다.
   기본값은 0mm ↔ 10mm 차이(`log1p(10)` ≈ 2.40)를 worst로 둔다.
 - **강수확률**: 0~100(%) 고정 범위이므로 차이를 100으로 나눠 그대로 쓴다.
@@ -222,7 +227,7 @@ def stability_score(temp_max_range, temp_min_range, precip_prob_range, precip_lo
     return round(100 * (1 - 0.25 * (temp + prob + rain + weather_severity)), 1)
 ```
 
-가중치(0.25 × 4), 기준값(5℃, 10mm), 날씨 감점표는 `config.toml`에서 바꿀 수 있게 한다. 바꾼 뒤 `recompute`로 전체 재계산 가능.
+가중치(0.25 × 4), 기준값(5℃, 10mm)은 `config.toml`, 날씨 좌표는 `weather_severity.json`에서 바꿀 수 있게 한다. 바꾼 뒤 `recompute`로 전체 재계산 가능.
 
 ### 5.2 1년 모은 뒤 볼 것 (report)
 
@@ -309,7 +314,7 @@ accu_weather/
 | 1 | 스키마 + `city add/list` + Open-Meteo 수집 + 3시간 슬롯 upsert | 수동 실행으로 weather에 15일치가 들어감 |
 | 2 | run.sh + crontab 등록 (22:00 / 23:00 / 23:30) | **가능한 빨리 가동** (강수확률·가시거리는 과거 데이터로 소급 불가) |
 | 3 | 하루 통합 | 22시 실행 후 `slot='day'` 행 생성 |
-| 4 | 변동성 계산 + accuracy | 15일 가동 후 d14~d0가 다 찬 날짜의 점수 생성 (감점표 확정 필요) |
+| 4 | 변동성 계산 + accuracy | 15일 가동 후 d14~d0가 다 찬 날짜의 점수 생성 |
 | 5 | report + recompute + 백업 | "n일전 → n−1일전 변경 확률" 표 출력 |
 | 선택 | wttr.in 어댑터, 실제 관측값 비교 | 필요해지면 |
 

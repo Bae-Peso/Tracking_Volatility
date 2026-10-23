@@ -18,7 +18,7 @@
 	"71": {"category": 5, "en": "Slight snowfall", "ko": "약한 눈", "ja": "弱い雪"},
 	"73": {"category": 5, "en": "Moderate snowfall", "ko": "눈", "ja": "雪"},
 	"75": {"category": 5, "en": "Heavy snowfall", "ko": "강한 눈", "ja": "強い雪"},
-	"77": {"category": 5, "en": "Snow grains", "ko": "쌀알눈", "ja": "霧雪"},
+	"77": {"category": 5, "en": "Snow grains", "ko": "싸라기눈", "ja": "霧雪"},
 	"80": {"category": 4, "en": "Slight rain showers", "ko": "약한 소나기", "ja": "弱いにわか雨"},
 	"81": {"category": 4, "en": "Moderate rain showers", "ko": "소나기", "ja": "にわか雨"},
 	"82": {"category": 4, "en": "Violent rain showers", "ko": "강한 소나기", "ja": "激しいにわか雨"},

@@ -26,10 +26,15 @@ LONGITUDE = 135.50
 TIMEZONE = "Asia/Tokyo"  # 날짜·lead_days·22시 판단 기준
 
 FETCH_FROM_HOUR = 22  # 이 시각 이후 수집분을 그날의 확정 예보로 본다
-FORECAST_DAYS = 15  # 오늘 + 7일
+FORECAST_DAYS = 15  # 오늘 + 14일
 SLOT_HOURS = 3
 SOURCE = "open-meteo"
-DB_PATH = Path(__file__).resolve().parent / "data" / "weather.sqlite3"
+BASE_DIR = Path(__file__).resolve().parent
+DB_PATH = BASE_DIR / "data" / "weather.sqlite3"
+
+# WMO 코드 → {category, en, ko, ja} / {x, y}
+WEATHER_CODES = json.loads((BASE_DIR / "weather_code.json").read_text(encoding="utf-8"))
+SEVERITY_XY = json.loads((BASE_DIR / "weather_severity.json").read_text(encoding="utf-8"))
 
 API_URL = "https://api.open-meteo.com/v1/forecast"
 HOURLY_VARS = [
@@ -46,7 +51,7 @@ CREATE TABLE IF NOT EXISTS weather (
   target_date  TEXT    NOT NULL,      -- 날짜 '2026-10-24'
   slot         TEXT    NOT NULL,      -- '00','03',…,'21'
   city         TEXT    NOT NULL,      -- 도시
-  lead_days    INTEGER NOT NULL,      -- n일전 예보 (0~7)
+  lead_days    INTEGER NOT NULL,      -- n일전 예보 (0~14)
   weather      INTEGER,               -- 날씨 카테고리 1~6
   weather_code INTEGER,               -- WMO 원본 코드
   temp_max     REAL,                  -- 최고 기온 ℃
@@ -63,22 +68,15 @@ CREATE TABLE IF NOT EXISTS weather (
 
 
 def weather_category(code):
-    """WMO 코드 → 1 맑음, 2 구름/흐림, 3 안개, 4 비, 5 눈, 6 뇌우."""
-    if code is None:
-        return None
-    if code <= 1:
-        return 1
-    if code <= 3:
-        return 2
-    if code in (45, 48):
-        return 3
-    if 51 <= code <= 67 or 80 <= code <= 82:
-        return 4
-    if 71 <= code <= 77 or code in (85, 86):
-        return 5
-    if 95 <= code <= 99:
-        return 6
-    return None
+    """WMO 코드 → 1 맑음, 2 구름/흐림, 3 안개, 4 비, 5 눈, 6 뇌우 (weather_code.json)."""
+    entry = WEATHER_CODES.get(str(code))
+    return entry["category"] if entry else None
+
+
+def weather_weight(code):
+    """WMO 코드 → 가중치 0~5 (원점~(x,y) 넓이, weather_severity.json). 모르는 코드는 0."""
+    xy = SEVERITY_XY.get(str(code))
+    return xy["x"] * xy["y"] / 15 * 5 if xy else 0.0
 
 
 def fetch():
@@ -115,7 +113,8 @@ def to_slots(data, fetched_at):
         precip = _values(chunk["precipitation"])
         prob = _values(chunk["precipitation_probability"])
 
-        code = max(codes) if codes else None  # WMO 코드는 클수록 나쁜 날씨
+        # 가중치가 가장 큰 코드가 대표 날씨 (같으면 코드 번호가 큰 쪽)
+        code = max(codes, key=lambda c: (weather_weight(c), c)) if codes else None
         target = start.date()
         rows.append({
             "target_date": target.isoformat(),
