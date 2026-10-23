@@ -4,7 +4,7 @@ import urllib.error
 from datetime import datetime, timezone
 from zoneinfo import ZoneInfo
 
-from . import db
+from . import accuracy, db
 from .daily import day_rows
 from .sources import openmeteo
 
@@ -42,10 +42,14 @@ def run(conn, cfg, force=False, city_ids=None):
         results = openmeteo.fetch(cities, cfg["collect"]["forecast_days"])
     except (urllib.error.URLError, TimeoutError) as e:
         names = ", ".join(c["name"] for c in cities)
-        raise SystemExit(f"{db.utc_now()} fetch failed ({names}): {e}")  # 다음 30분 실행이 재시도
+        message = f"fetch failed ({names}): {e}"
+        db.log_error(conn, message)
+        raise SystemExit(f"{db.utc_now()} {message}")  # 다음 30분 실행이 재시도
     fetched_at = db.utc_now()
     for city, now, data in zip(cities, nows, results):
         slots = openmeteo.to_slots(data, city["city_id"], now.date(), fetched_at)
         days = day_rows(slots)
         db.upsert_weather(conn, slots + days)
-        print(f"{now:%Y-%m-%d %H:%M %Z} saved {len(slots)}+{len(days)} rows for {city['name']}")
+        # 방금 받은 d0로 오늘 날짜의 n일전 정확도를 계산
+        n_acc = accuracy.compute(conn, cfg, city["city_id"], now.date().isoformat(), openmeteo.SOURCE)
+        print(f"{now:%Y-%m-%d %H:%M %Z} saved {len(slots)}+{len(days)} rows, {n_acc} accuracy for {city['name']}")

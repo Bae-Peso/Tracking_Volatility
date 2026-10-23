@@ -3,6 +3,7 @@
 사용법:
     python3 -m accu_weather collect                 # 현지 22시가 지난 도시만 받음 (cron 30분 간격)
     python3 -m accu_weather collect --force         # 시각과 상관없이 모든 활성 도시를 받음
+    python3 -m accu_weather recompute [--city <id>] # 정확도 전체 재계산 (기준값·가중치를 바꾼 뒤)
     python3 -m accu_weather city add "Osaka"        # 영어 이름으로 검색, 후보를 번호로 선택
     python3 -m accu_weather city add "Osaka" --lat 34.70 --lon 135.50   # 좌표 직접 지정
     python3 -m accu_weather city list [--all]
@@ -18,13 +19,22 @@ import csv
 import sqlite3
 import sys
 
-from . import collect, config, db
+from . import accuracy, collect, config, db
 from .sources import openmeteo
 
 
 def cmd_collect(conn, cfg, args):
     ids = [db.find_city(conn, p)["city_id"] for p in args.city] if args.city else None
-    collect.run(conn, cfg, force=args.force, city_ids=ids)
+    try:
+        collect.run(conn, cfg, force=args.force, city_ids=ids)
+    except Exception as e:  # 예상 못 한 오류도 웹 알림용으로 남긴다 (fetch 실패는 collect가 직접 남김)
+        db.log_error(conn, f"collect error: {type(e).__name__}: {e}")
+        raise
+
+
+def cmd_recompute(conn, cfg, args):
+    city_id = db.find_city(conn, args.city)["city_id"] if args.city else None
+    print(f"recomputed {accuracy.recompute(conn, cfg, city_id)} accuracy rows")
 
 
 def _pick(candidates, pick):
@@ -121,6 +131,10 @@ def build_parser():
     c.add_argument("--force", action="store_true", help="시각·중복 확인 없이 바로 받음")
     c.add_argument("--city", action="append", metavar="ID", help="이 도시만 (여러 번 지정 가능)")
     c.set_defaults(func=cmd_collect)
+
+    c = sub.add_parser("recompute", help="정확도 전체 재계산")
+    c.add_argument("--city", metavar="ID", help="이 도시만")
+    c.set_defaults(func=cmd_recompute)
 
     city = sub.add_parser("city", help="도시 관리").add_subparsers(dest="city_cmd", required=True)
 

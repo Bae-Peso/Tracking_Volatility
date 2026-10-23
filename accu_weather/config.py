@@ -10,6 +10,11 @@ DEFAULTS = {
         "fetch_hour": 22,  # 도시 현지 시각으로 이 시각 이후 수집분을 그날의 확정 예보로 본다
         "forecast_days": 15,  # 오늘 + 14일
     },
+    "accuracy": {
+        "temp_worst_c": 5.0,  # d0와 평균 이만큼(℃) 이상 다르면 온도 항목 최악
+        "rain_worst_mm": 10.0,  # 0mm ↔ 이만큼 차이(로그 척도)면 강수량 항목 최악
+        "weights": {"temp": 0.25, "prob": 0.25, "rain": 0.25, "weather": 0.25},
+    },
     "paths": {
         "db": "data/weather.sqlite3",
         "cities": "cities.txt",

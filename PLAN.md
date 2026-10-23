@@ -2,9 +2,10 @@
 
 작성일: 2026-10-22 / 수정: 2026-10-23
 - v2: 데이터 소스·DB 구조·정확도 기준 변경
-- v3: 도시별 현지 22시 수집(cron 30분 간격), city_id UUID, 변동성을 범위 대신 "최종 예보와의 차이 평균"으로 변경
+- v3: 도시별 현지 22시 수집(cron 30분 간격), city_id UUID
+- v4: 정확도를 "날짜 × n일전" 한 줄씩(d0와 비교)으로 바꾸고 월별·연도별로 n일전끼리 평균, error_log 추가
 
-버전 : 0.1 (1~3단계 구현, 첫 배포본)
+버전 : 0.2 (1~4단계 + recompute 구현)
 
 ---
 
@@ -73,7 +74,8 @@ cron 30분마다 → run.sh → python3 -m accu_weather collect
   2) 1시간 값 → 3시간 슬롯(00,03,…,21)으로 묶음
   3) 3시간 슬롯 8개를 하루 통합 행(slot='day')으로 계산
   4) weather 테이블에 저장 (도시당 슬롯 120행 + 하루 통합 15행)
-  5) (다음 단계) 오늘 날짜의 변동성 계산 → accuracy 저장
+  5) 오늘 날짜(d0를 방금 받은 날짜)의 n일전 정확도 계산 → accuracy 저장
+  (요청 실패 시 error_log에 기록하고 종료, 다음 30분 실행이 재시도)
 ```
 
 ### "n일 전 예보"의 정의
@@ -101,7 +103,7 @@ cron 30분마다 → run.sh → python3 -m accu_weather collect
 
 ## 4. DB 구조 (SQLite, 검색 위주)
 
-테이블 3개: **city(도시)**, **weather(날씨 정보)**, **accuracy(정확도)**.
+테이블 4개: **city(도시)**, **weather(날씨 정보)**, **accuracy(정확도)**, **error_log(수집 실패)**.
 
 ### 4.1 city — 도시
 
@@ -184,73 +186,107 @@ WMO 코드 → 카테고리 매핑과 날씨 이름은 `weather_code.json` 한 �
 숫자가 클수록 "나쁜" 날씨다. 대표 날씨는 카테고리 최댓값이 아니라 `weather_severity.json` 가중치로 고른다 (3장 하루 통합 규칙).
 wttr.in을 붙이면 wttr 코드용 매핑 표를 하나 더 둔다.
 
-### 4.3 accuracy — 정확도(변동성)
+### 4.3 accuracy — 정확도
 
-대상 날짜의 확정 시점(그날 현지 22시)에 d14~d0 하루 통합 행을 비교해서 한 줄 저장한다.
+**날짜 하나에 n일전(1~14)마다 한 줄**: "n일 전에 본 이 날짜의 예보가 d0와 얼마나 같았나".
 
-- **기준 예보**: d0 (당일 22시 예보, 사실상 최종값). d0가 빠졌으면 남은 것 중 가장 늦은 예보.
-- **최소 개수**: 예보가 **3개 이상**일 때만 계산한다. 3개 미만이면 행을 만들지 않는다.
-- **평균으로 계산**: 각 항목은 "기준 예보와의 차이"를 **비교한 예보 개수(n_forecasts − 1)로 나눈 평균**이다.
-  범위(최댓값 − 최솟값)를 쓰면 빠진 예보가 많을수록 범위가 좁아져 실제보다 안정적으로 보이므로 쓰지 않는다.
-  (먼 예보(d14 등)만 빠지면 평균이 조금 작아지는 경향은 남는다. `n_forecasts`로 걸러서 볼 수 있다.)
+- **기준(정답 대신)**: d0 = 당일 현지 22시 예보. 이미 지나간 시간대는 사실상 실측이라 최종값으로 쓴다.
+- 날짜마다 최대 14줄. 수집 실패로 빠진 n일전 예보는 그 줄만 없다. d0가 없는 날은 계산하지 않는다.
+- 그 날짜의 d0를 받는 순간(현지 22시 수집 직후) 계산한다. `recompute`로 전체 재계산 가능.
+- 차이는 **부호를 남긴다** (n일전 − d0). +면 높게 예보한 것. 평균 오차를 볼 때는 `ABS()`.
 
 ```sql
 CREATE TABLE accuracy (
-  target_date       TEXT    NOT NULL,
-  city_id           TEXT    NOT NULL REFERENCES city(city_id),
-  source            TEXT    NOT NULL DEFAULT 'open-meteo',
-  n_forecasts       INTEGER,          -- 비교에 쓴 예보 개수 (3~15)
-  ref_lead          INTEGER,          -- 기준 예보의 lead_days (보통 0)
-  temp_max_dev      REAL,             -- |n일전 최고기온 − 기준| 의 평균 ℃
-  temp_min_dev      REAL,             -- |n일전 최저기온 − 기준| 의 평균 ℃
-  precip_prob_dev   REAL,             -- |n일전 강수확률 − 기준| 의 평균 %p
-  precip_log_dev    REAL,             -- |log1p(n일전 강수량) − log1p(기준)| 의 평균
-  weather_severity  REAL,             -- |w(n일전) − w(기준)| / 5 의 평균, 0~1 (5.1 참고)
-  weather_changes   INTEGER,          -- 이웃한 예보끼리 날씨 카테고리가 바뀐 횟수 (d14→d13 … d1→d0, 빠진 날은 건너뛰고 이웃끼리)
-  weather_change_rate REAL,           -- weather_changes / (n_forecasts − 1)
-  stability_score   REAL,             -- 0~100, 높을수록 예보가 안 바뀜
-  computed_at       TEXT    NOT NULL,
-  PRIMARY KEY (city_id, target_date, source)
+  target_date      TEXT    NOT NULL,      -- 대상 날짜 (도시 현지)
+  city_id          TEXT    NOT NULL REFERENCES city(city_id),
+  lead_days        INTEGER NOT NULL,      -- 1~14
+  source           TEXT    NOT NULL DEFAULT 'open-meteo',
+  weather_match    INTEGER,               -- 날씨 카테고리가 d0와 같으면 1, 다르면 0
+  weather_severity REAL,                  -- |w − w(d0)| / 5, 0~1 (5.1)
+  temp_max_diff    REAL,                  -- n일전 − d0 ℃
+  temp_min_diff    REAL,
+  precip_prob_diff INTEGER,               -- n일전 − d0 %p
+  precip_log_diff  REAL,                  -- log1p(n일전 mm) − log1p(d0 mm)
+  score            REAL,                  -- 0~100, 높을수록 d0와 가까움 (5.1)
+  computed_at      TEXT    NOT NULL,
+  PRIMARY KEY (city_id, target_date, lead_days, source)
 );
 ```
 
-### 4.4 용량
+### 4.4 error_log — 수집 실패 기록
 
-도시 1개당 하루 약 135행(15일 × 9슬롯)이 확정되어 **연간 약 5만 행**이 쌓인다.
+```sql
+CREATE TABLE error_log (
+  error_id    INTEGER PRIMARY KEY,
+  occurred_at TEXT NOT NULL,             -- UTC
+  message     TEXT NOT NULL,             -- 'fetch failed (Osaka): HTTP Error 503 …'
+  read_at     TEXT                       -- NULL이면 아직 확인 안 함
+);
+```
+
+- 수집 실패(Open-Meteo 요청 실패, 예상 못 한 오류)를 남긴다. 로그 파일에도 같이 남는다.
+- 웹에서 `read_at IS NULL`인 것만 알림으로 보여주고, 확인하면 `read_at`을 채운다. 행은 지우지 않는다.
+- run.sh 단계 실패(`timeout`으로 강제 종료 등)는 Python이 기록할 틈이 없어 로그 파일에만 남는다.
+
+### 4.5 용량
+
+도시 1개당 하루 weather 135행(15일 × 9슬롯) + accuracy 14행 → **연간 약 5만 5천 행**.
 
 ---
 
-## 5. 변동성(정확도) 계산
+## 5. 정확도 계산과 분석
 
-### 5.1 종합 점수 함수
-4개 항목을 각각 0(best)~1(worst)로 만든 뒤 **0.25씩 같은 가중치**로 합친다.
+### 5.1 한 줄(n일전 예보 하나)의 점수
 
-- **온도**: 0℃ 차이를 best, 5℃ 이상 차이를 worst로 판단함
+4개 항목을 각각 0(d0와 같음)~1(기준값 이상 차이)로 만든 뒤 **0.25씩 같은 가중치**로 합친다.
+
+- **온도**: 최고·최저 기온 차이의 평균. 0℃ 차이를 best, 5℃ 이상 차이를 worst로 판단함
 - **날씨**: 맑음 → 구름처럼 생활에 큰 영향이 없는 변화는 감점을 적게, 맑음 → 호우·뇌우처럼 극단적인 변화는 감점을 크게 준다.
   WMO 코드마다 평면 좌표 (x=종류 0~5, y=강도 1~3)를 `weather_severity.json`에 둔다.
   (WMO 번호의 두 자리를 그대로 쓰면 80=0점, 77 싸라기눈 > 75 강한 눈처럼 순서가 깨지므로 좌표를 직접 지정)
   - x: 0 맑음, 1 구름, 2 안개·이슬비, 3 비·소나기, 4 눈·어는 비, 5 뇌우 / y: 1 약, 2 보통, 3 강
   - 가중치 `w = x·y / 15 × 5` (원점~(x,y) 직사각형 넓이, 최대 5)
-  - 두 예보 사이 감점 = `|w_a − w_b| / 5` (넓이가 이미 제곱처럼 커지므로 지수 없이 사용)
-  - `weather_severity` = 각 n일전 예보와 기준 예보 사이 감점의 평균 (다른 항목처럼 차이 평균)
-  - 비→비(약한 비→강한 비)처럼 카테고리가 같은 변화는 `weather_changes`에서는 세지 않고, 정도의 차이는 여기서 반영한다.
+  - `weather_severity = |w(n일전) − w(d0)| / 5` (넓이가 이미 제곱처럼 커지므로 지수 없이 사용)
+  - `weather_match`는 카테고리만 본다 (약한 비 ↔ 강한 비도 "비"로 같음). 정도의 차이는 `weather_severity`가 반영한다.
 - **강우량**: 0 → 1mm와 10 → 11mm는 체감이 다르므로 **로그 척도**(`log1p(mm)`)로 차이를 잰다.
   기본값은 0mm ↔ 10mm 차이(`log1p(10)` ≈ 2.40)를 worst로 둔다.
 - **강수확률**: 0~100(%) 고정 범위이므로 차이를 100으로 나눠 그대로 쓴다.
 
 ```python
-def stability_score(temp_max_dev, temp_min_dev, precip_prob_dev, precip_log_dev, weather_severity):
-    temp = min((temp_max_dev + temp_min_dev) / 2 / 5.0, 1.0)       # 최종 예보와 평균 5℃ 이상 차이면 최악
-    prob = min(precip_prob_dev / 100.0, 1.0)
-    rain = min(precip_log_dev / math.log1p(10.0), 1.0)             # 0mm ↔ 10mm 이상 차이면 최악
-    return round(100 * (1 - 0.25 * (temp + prob + rain + weather_severity)), 1)
+def score(row):   # accu_weather/accuracy.py
+    temp = min((abs(temp_max_diff) + abs(temp_min_diff)) / 2 / 5.0, 1.0)
+    prob = min(abs(precip_prob_diff) / 100.0, 1.0)
+    rain = min(abs(precip_log_diff) / math.log1p(10.0), 1.0)
+    return round(100 * (1 - (0.25 * temp + 0.25 * prob + 0.25 * rain + 0.25 * weather_severity)), 1)
 ```
 
-가중치(0.25 × 4), 기준값(5℃, 10mm)은 `config.toml`, 날씨 좌표는 `weather_severity.json`에서 바꿀 수 있게 한다. 바꾼 뒤 `recompute`로 전체 재계산 가능.
+가중치(0.25 × 4), 기준값(5℃, 10mm)은 `config.toml`의 `[accuracy]`, 날씨 좌표는 `weather_severity.json`에서 바꾼다.
+바꾼 뒤 `python3 -m accu_weather recompute`로 전체 재계산.
 
-### 5.2 데이터를 수집한 뒤 볼 것 (report)
+### 5.2 월별·연도별 분석 (핵심)
 
-- **"n일 전 → n−1일 전에 날씨가 바뀔 확률"**: 핵심 지표
+같은 n일전끼리 묶어 평균 낸다. 예: 11월의 14일전 정확도 = 11/1~11/30 각 날짜에 대한 14일전 예보 30줄의 평균.
+→ **도시 × 월 × n일전(1~14)** 마다 값 하나. 한 달에 14개, "며칠 전 예보부터 믿을 만한가" 곡선이 된다.
+
+```sql
+-- 도시·월·n일전별 정확도 (연도별은 strftime('%Y', target_date))
+SELECT city.name, strftime('%Y-%m', target_date) AS month, lead_days,
+       COUNT(*)                               AS days,          -- 평균에 쓴 날짜 수 (빠진 날 확인용)
+       ROUND(AVG(score), 1)                   AS avg_score,
+       ROUND(AVG(weather_match) * 100, 1)     AS weather_match_pct,
+       ROUND(AVG(ABS(temp_max_diff)), 2)      AS temp_max_err,  -- 평균 오차 ℃
+       ROUND(AVG(temp_max_diff), 2)           AS temp_max_bias, -- +면 높게 예보하는 경향
+       ROUND(AVG(ABS(precip_prob_diff)), 1)   AS precip_prob_err
+FROM accuracy JOIN city USING (city_id)
+GROUP BY city_id, month, lead_days
+ORDER BY city.name, month, lead_days;
+```
+
+- 수집 실패로 빠진 날은 그 n일전 평균에서만 빠진다. `days`가 너무 적은 칸은 걸러서 본다.
+
+보조 지표 (weather 테이블에서 바로):
+
+- **"n일 전 → n−1일 전에 날씨가 바뀔 확률"**: 예보가 하루 사이에 얼마나 자주 뒤집히나
 
 ```sql
 SELECT a.lead_days AS from_lead,
@@ -263,8 +299,7 @@ WHERE a.slot = 'day'
 GROUP BY a.lead_days ORDER BY a.lead_days DESC;
 ```
 
-- 도시별·월별 평균 stability_score → 어느 도시, 어느 계절에 예보가 가장 오락가락하나
-- 슬롯별(00~21시) 변동성 → 하루 중 어느 시간대 예보가 잘 바뀌나
+- 슬롯별(00~21시) 변동성 → 하루 중 어느 시간대 예보가 잘 바뀌나 (필요하면 accuracy를 슬롯 단위로도 계산)
 - 출력은 웹 조회 화면에서 한다 (7.4). CLI 조회 명령은 두지 않는다. 그 전까지는 `sqlite3 -readonly` 나 DB 뷰어로 직접 본다.
 
 ---
@@ -294,13 +329,13 @@ python3 -m accu_weather city export / import    # cities.txt (탭 구분, city_i
 ```
 accu_weather/
 ├─ PLAN.md
-├─ config.toml            # 수집 시각·기간, 경로 (추후 가중치, 기준값)
+├─ config.toml            # 수집 시각·기간, 정확도 가중치·기준값, 경로
 ├─ run.sh                 # cron 진입점
 ├─ cities.txt             # city export/import 파일
 ├─ weather_code.json      # WMO 코드 → 카테고리, 이름
 ├─ weather_severity.json  # WMO 코드 → (x, y) 좌표
 ├─ accu_weather/
-│   ├─ __main__.py        # collect / city (추후 recompute / report)
+│   ├─ __main__.py        # collect / recompute / city
 │   ├─ config.py          # config.toml 읽기
 │   ├─ codes.py           # 카테고리, 가중치, 대표 날씨
 │   ├─ collect.py         # 현지 22시가 지난 도시 골라서 수집
@@ -309,7 +344,8 @@ accu_weather/
 │   │   └─ wttr.py        # (선택) wttr.in 어댑터
 │   ├─ db.py              # 스키마, 도시, upsert
 │   ├─ daily.py           # 하루 통합
-│   └─ accuracy.py        # (추후) 변동성 계산
+│   └─ accuracy.py        # n일전 vs d0 정확도
+├─ tests/                 # python3 -m unittest (네트워크 안 씀)
 ├─ data/weather.sqlite3
 └─ logs/
 ```
@@ -332,8 +368,8 @@ accu_weather/
 - 수집 cron은 서버 시간대와 상관없이 30분마다 돈다. 어느 도시를 받을지는 스크립트가 `city.timezone` 기준으로 판단한다.
   → 도시를 추가·삭제해도 crontab은 그대로, 서머타임도 `zoneinfo`가 처리.
 - 날짜·슬롯·lead_days, "오늘 이미 받았나" 판단 모두 각 도시의 `city.timezone` 기준.
-- 매 실행 결과(성공 행 수, 건너뜀, 실패)는 `logs/YYYY-MM.log`에만 기록한다. DB에 별도 로그 테이블은 두지 않는다.
-- 수집 실패 알림(메일·메신저)은 당분간 두지 않는다. 실패는 로그의 `FAILED` / `fetch failed` 줄로 확인한다.
+- 매 실행 결과(저장 행 수, 실패)는 `logs/YYYY-MM.log`에 기록한다. 실패는 `error_log` 테이블에도 남긴다 (4.4).
+- 수집 실패 알림(메일·메신저)은 두지 않는다. 웹 조회를 만들면 `error_log`의 미확인 항목을 알림으로 보여준다.
 
 ### 7.4 웹 조회 (예정)
 
@@ -351,11 +387,11 @@ accu_weather/
 
 | 단계 | 내용 | 완료 기준 |
 |---|---|---|
-| 1 | 스키마 + `city add/list` + Open-Meteo 수집 + 3시간 슬롯 upsert | 수동 실행으로 weather에 15일치가 들어감 |
-| 2 | run.sh + crontab 등록 (30분 간격, 도시별 현지 22시 판단) | **가능한 빨리 가동** (강수확률·가시거리는 과거 데이터로 소급 불가) |
-| 3 | 하루 통합 | 22시 실행 후 `slot='day'` 행 생성 |
-| 4 | 변동성 계산 + accuracy | 3일 가동 후부터 점수 생성, 15일 가동 후 d14~d0가 다 찬 점수 |
-| 5 | recompute + 백업 | 기준값을 바꾼 뒤 accuracy 전체 재계산, 주간 백업 동작 |
+| 1 | ✅ 스키마 + `city add/list` + Open-Meteo 수집 + 3시간 슬롯 upsert | 수동 실행으로 weather에 15일치가 들어감 |
+| 2 | ✅ run.sh + crontab 등록 (`./run.sh install`, 30분 간격, 도시별 현지 22시 판단) | **가능한 빨리 가동** (강수확률·가시거리는 과거 데이터로 소급 불가) |
+| 3 | ✅ 하루 통합 | 22시 실행 후 `slot='day'` 행 생성 |
+| 4 | 정확도 (n일전 vs d0) + error_log + 테스트 | ✅ 구현. 가동 다음 날부터 1일전 행이 생기고, 15일 뒤 1~14일전이 다 참 |
+| 5 | recompute ✅ + 백업 | 백업 경로 정하고 crontab 등록 |
 | 6 | 웹 조회 (nginx + Flask, 7.4, 보류) | 브라우저에서 "n일전 → n−1일전 변경 확률" 표 확인 |
 | 선택 | wttr.in 어댑터, 실제 관측값 비교 | 필요해지면 |
 
@@ -366,9 +402,10 @@ accu_weather/
 정한 것 (2026-10-23):
 - 수집: 도시별 현지 22시, cron 30분 간격 (`./run.sh install`)
 - city_id: UUID
-- accuracy: 예보 3개 이상일 때만, 기준 예보와의 차이 평균 (4.3)
-- weather_changes: 카테고리 기준 (정도 차이는 weather_severity)
-- 수집 실패 알림: 당분간 로그만
+- accuracy: 날짜 × n일전(1~14)마다 d0와 비교한 한 줄, 월별·연도별로 같은 n일전끼리 평균 (4.3, 5.2)
+- weather_match: 카테고리 기준 (정도 차이는 weather_severity)
+- 수집 실패: 로그 파일 + error_log 테이블, 알림은 웹에서 (미확인만 표시)
+- 테스트: `python3 -m unittest`
 - 웹: 추후 Flask (보류)
 
 남은 것 (기본값으로 진행해도 됨):

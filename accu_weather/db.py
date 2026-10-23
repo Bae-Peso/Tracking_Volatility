@@ -36,22 +36,29 @@ CREATE TABLE IF NOT EXISTS weather (
 );
 CREATE INDEX IF NOT EXISTS idx_weather_date ON weather (target_date, slot);
 
+-- 날짜 하나에 n일전(1~14)마다 한 줄: "n일 전 예보가 d0(당일 22시 예보)와 얼마나 같았나"
 CREATE TABLE IF NOT EXISTS accuracy (
-  target_date         TEXT    NOT NULL,
-  city_id             TEXT    NOT NULL REFERENCES city(city_id),
-  source              TEXT    NOT NULL DEFAULT 'open-meteo',
-  n_forecasts         INTEGER,          -- 3~15 (3개 미만이면 행 없음)
-  ref_lead            INTEGER,          -- 기준 예보의 lead_days (보통 0)
-  temp_max_dev        REAL,             -- 기준 예보와의 차이 평균
-  temp_min_dev        REAL,
-  precip_prob_dev     REAL,
-  precip_log_dev      REAL,
-  weather_severity    REAL,
-  weather_changes     INTEGER,
-  weather_change_rate REAL,
-  stability_score     REAL,
-  computed_at         TEXT    NOT NULL,
-  PRIMARY KEY (city_id, target_date, source)
+  target_date      TEXT    NOT NULL,      -- 대상 날짜 (도시 현지)
+  city_id          TEXT    NOT NULL REFERENCES city(city_id),
+  lead_days        INTEGER NOT NULL,      -- 1~14
+  source           TEXT    NOT NULL DEFAULT 'open-meteo',
+  weather_match    INTEGER,               -- 날씨 카테고리가 d0와 같으면 1, 다르면 0
+  weather_severity REAL,                  -- |w − w(d0)| / 5, 0~1
+  temp_max_diff    REAL,                  -- n일전 − d0 ℃ (+면 높게 예보)
+  temp_min_diff    REAL,
+  precip_prob_diff INTEGER,               -- n일전 − d0 %p
+  precip_log_diff  REAL,                  -- log1p(n일전 mm) − log1p(d0 mm)
+  score            REAL,                  -- 0~100, 높을수록 d0와 가까움
+  computed_at      TEXT    NOT NULL,
+  PRIMARY KEY (city_id, target_date, lead_days, source)
+);
+
+-- 수집 실패 기록. 웹에서 확인하면 read_at을 채워 알림에서 뺀다 (기록은 남김).
+CREATE TABLE IF NOT EXISTS error_log (
+  error_id    INTEGER PRIMARY KEY,
+  occurred_at TEXT NOT NULL,             -- UTC
+  message     TEXT NOT NULL,
+  read_at     TEXT                       -- NULL이면 아직 확인 안 함
 );
 """
 
@@ -113,17 +120,7 @@ def purge_city(conn, city_id):
 # ---- weather ----
 
 def upsert_weather(conn, rows):
-    if not rows:
-        return
-    cols = list(rows[0])
-    updates = ", ".join(f"{c}=excluded.{c}" for c in cols)
-    sql = (
-        f"INSERT INTO weather ({', '.join(cols)}) "
-        f"VALUES ({', '.join(':' + c for c in cols)}) "
-        f"ON CONFLICT (city_id, target_date, slot, lead_days, source) DO UPDATE SET {updates}"
-    )
-    with conn:
-        conn.executemany(sql, rows)
+    _upsert(conn, "weather", ["city_id", "target_date", "slot", "lead_days", "source"], rows)
 
 
 def fetched_since(conn, city_id, local_date, since_utc, source):
@@ -134,3 +131,49 @@ def fetched_since(conn, city_id, local_date, since_utc, source):
         (city_id, local_date, source, since_utc),
     ).fetchone()
     return row is not None
+
+
+def _upsert(conn, table, key_cols, rows):
+    if not rows:
+        return
+    cols = list(rows[0])
+    updates = ", ".join(f"{c}=excluded.{c}" for c in cols if c not in key_cols)
+    sql = (
+        f"INSERT INTO {table} ({', '.join(cols)}) "
+        f"VALUES ({', '.join(':' + c for c in cols)}) "
+        f"ON CONFLICT ({', '.join(key_cols)}) DO UPDATE SET {updates}"
+    )
+    with conn:
+        conn.executemany(sql, rows)
+
+
+def day_forecasts(conn, city_id, target_date, source):
+    """한 날짜의 하루 통합 예보 전부 (lead_days 오름차순)."""
+    return conn.execute(
+        "SELECT * FROM weather WHERE city_id = ? AND target_date = ? AND slot = 'day' AND source = ? "
+        "ORDER BY lead_days",
+        (city_id, target_date, source),
+    ).fetchall()
+
+
+def d0_dates(conn, city_id=None):
+    """d0(당일 예보)가 있는 (city_id, target_date, source) 목록. recompute 대상."""
+    sql = "SELECT city_id, target_date, source FROM weather WHERE slot = 'day' AND lead_days = 0"
+    params = ()
+    if city_id:
+        sql += " AND city_id = ?"
+        params = (city_id,)
+    return conn.execute(sql + " ORDER BY target_date", params).fetchall()
+
+
+# ---- accuracy ----
+
+def upsert_accuracy(conn, rows):
+    _upsert(conn, "accuracy", ["city_id", "target_date", "lead_days", "source"], rows)
+
+
+# ---- error_log ----
+
+def log_error(conn, message):
+    with conn:
+        conn.execute("INSERT INTO error_log (occurred_at, message) VALUES (?, ?)", (utc_now(), message))
