@@ -26,6 +26,8 @@ CREATE TABLE IF NOT EXISTS weather (
   weather_code INTEGER,               -- WMO 원본 코드
   temp_max     REAL,                  -- 최고 기온 ℃
   temp_min     REAL,                  -- 최저 기온 ℃
+  feel_max     REAL,                  -- 최고 체감온도 ℃ (습도·바람·햇볕 반영)
+  feel_min     REAL,                  -- 최저 체감온도 ℃
   wind_kmh     REAL,                  -- 바람 km/h
   visibility_m REAL,                  -- 가시거리 m
   precip_mm    REAL,                  -- 강수량 mm
@@ -43,9 +45,11 @@ CREATE TABLE IF NOT EXISTS accuracy (
   lead_days        INTEGER NOT NULL,      -- 1~14
   source           TEXT    NOT NULL DEFAULT 'open-meteo',
   weather_match    INTEGER,               -- 날씨 카테고리가 d0와 같으면 1, 다르면 0
-  weather_severity REAL,                  -- |w − w(d0)| / 5, 0~1
+  weather_diff     REAL,                  -- |가중치 − 가중치(d0)|, 0~1 (weather_weight.json)
   temp_max_diff    REAL,                  -- n일전 − d0 ℃ (+면 높게 예보)
   temp_min_diff    REAL,
+  feel_max_diff    REAL,                  -- 체감온도 n일전 − d0 ℃
+  feel_min_diff    REAL,
   precip_prob_diff INTEGER,               -- n일전 − d0 %p
   precip_log_diff  REAL,                  -- log1p(n일전 mm) − log1p(d0 mm)
   score            REAL,                  -- 0~100, 높을수록 d0와 가까움
@@ -61,6 +65,12 @@ CREATE TABLE IF NOT EXISTS error_log (
   read_at     TEXT                       -- NULL이면 아직 확인 안 함
 );
 """
+
+# 예전 DB에 없는 열 (테이블, 열, 타입). connect가 더한다
+ADDED_COLUMNS = [
+    ("weather", "feel_max", "REAL"), ("weather", "feel_min", "REAL"),
+    ("accuracy", "feel_max_diff", "REAL"), ("accuracy", "feel_min_diff", "REAL"),
+]
 
 CITY_COLS = ["city_id", "name", "country", "latitude", "longitude", "timezone", "active", "added_at"]
 
@@ -78,7 +88,21 @@ def connect(path):
     if "city" in cols:
         raise SystemExit(f"{path}: 프로토타입(city TEXT) 스키마입니다. 파일을 옮기거나 지운 뒤 다시 실행하세요.")
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
+
+
+def _migrate(conn):
+    """예전 스키마의 DB를 지금 스키마로 (데이터는 그대로). 날씨 계산이 바뀌었으면 recompute가 필요하다."""
+    def columns(table):
+        return {r["name"] for r in conn.execute(f"PRAGMA table_info({table})")}
+
+    with conn:
+        if "weather_severity" in columns("accuracy"):
+            conn.execute("ALTER TABLE accuracy RENAME COLUMN weather_severity TO weather_diff")
+        for table, col, decl in ADDED_COLUMNS:
+            if col not in columns(table):
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
 
 
 # ---- city ----

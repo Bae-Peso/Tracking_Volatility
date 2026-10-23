@@ -40,9 +40,11 @@ class ToSlotsTest(unittest.TestCase):
         h["precipitation_probability"][:3] = [10, 40, 20]
         h["wind_speed_10m"][:3] = [3.0, 8.0, 1.0]
         h["visibility"][:3] = [9000.0, 500.0, 7000.0]
-        h["weather_code"][:3] = [0, 61, 3]  # 가중치: 0 → 0, 61 → 1.0, 3 → 0.67
+        h["apparent_temperature"][:3] = [3.0, 11.0, 6.0]
+        h["weather_code"][:3] = [0, 61, 3]  # 가중치: 0 → 0, 61 → 0.35, 3 → 0.05
         r = openmeteo.to_slots(data, "c1", TODAY, FETCHED)[0]
         self.assertEqual((r["temp_max"], r["temp_min"]), (9.0, 5.0))
+        self.assertEqual((r["feel_max"], r["feel_min"]), (11.0, 3.0))
         self.assertEqual(r["precip_mm"], 1.75)
         self.assertEqual(r["precip_prob"], 40)
         self.assertEqual(r["wind_kmh"], 8.0)
@@ -70,14 +72,17 @@ class DayRowsTest(unittest.TestCase):
         h = data["hourly"]
         h["temperature_2m"][5] = 20.0  # 05시 최고
         h["temperature_2m"][22] = -1.0  # 22시 최저
+        h["apparent_temperature"][5] = 24.0  # 습도·햇볕으로 기온보다 높게
+        h["apparent_temperature"][23] = -5.0  # 바람으로 기온보다 낮게
         h["precipitation"][10:13] = [1.0, 2.0, 0.5]  # 10~12시
         h["weather_code"][13] = 95  # 13시 뇌우
-        h["weather_code"][14] = 65  # 14시 강한 비 (가중치 3.0 < 뇌우 3.33)
+        h["weather_code"][14] = 65  # 14시 강한 비 (가중치 0.45 < 뇌우 0.75)
         days = day_rows(openmeteo.to_slots(data, "c1", TODAY, FETCHED))
         self.assertEqual(len(days), 2)
         d0 = next(d for d in days if d["lead_days"] == 0)
         self.assertEqual(d0["slot"], "day")
         self.assertEqual((d0["temp_max"], d0["temp_min"]), (20.0, -1.0))
+        self.assertEqual((d0["feel_max"], d0["feel_min"]), (24.0, -5.0))
         self.assertEqual(d0["precip_mm"], 3.5)
         self.assertEqual(d0["weather_code"], 95)
         self.assertEqual(d0["weather"], 6)

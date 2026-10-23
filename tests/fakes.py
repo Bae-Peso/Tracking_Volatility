@@ -8,14 +8,16 @@ from zoneinfo import ZoneInfo
 from accu_weather import config, db
 
 
-def hourly_data(start, days, code=0, temp=10.0, wind=5.0, vis=20000.0, precip=0.0, prob=0):
-    """start(date)부터 days일치, 모든 시각이 같은 값인 1시간 단위 응답. 테스트에서 리스트를 직접 고쳐 쓴다."""
+def hourly_data(start, days, code=0, temp=10.0, wind=5.0, vis=20000.0, precip=0.0, prob=0, feel=None):
+    """start(date)부터 days일치, 모든 시각이 같은 값인 1시간 단위 응답. 테스트에서 리스트를 직접 고쳐 쓴다.
+    체감온도(feel)를 안 주면 기온과 같다."""
     times = [f"{start + timedelta(days=d)}T{h:02d}:00" for d in range(days) for h in range(24)]
     n = len(times)
     return {"hourly": {
         "time": times,
         "weather_code": [code] * n,
         "temperature_2m": [temp] * n,
+        "apparent_temperature": [temp if feel is None else feel] * n,
         "wind_speed_10m": [wind] * n,
         "visibility": [vis] * n,
         "precipitation": [precip] * n,

@@ -23,6 +23,7 @@ def row(city_id, target, lead, slot="day", code=0, temp_max=20.0, temp_min=10.0,
     return {
         "target_date": target, "slot": slot, "city_id": city_id, "lead_days": lead,
         "weather": codes.category(code), "weather_code": code, "temp_max": temp_max, "temp_min": temp_min,
+        "feel_max": temp_max + 1, "feel_min": temp_min - 2,
         "wind_kmh": wind, "visibility_m": vis, "precip_mm": precip, "precip_prob": prob,
         "source": "open-meteo", "fetched_at": "t",
     }
@@ -79,7 +80,8 @@ class CalendarTest(WebDB):
 
         self.assertAlmostEqual(bad("precip_prob"), 0.6)
         self.assertAlmostEqual(bad("precip"), round(math.log1p(10) / math.log1p(ACC["rain_worst_mm"]), 3))
-        self.assertAlmostEqual(bad("weather"), 0.2)  # 맑음(0) ↔ 약한 비(가중치 1)
+        self.assertAlmostEqual(bad("weather"), 0.35)  # 맑음(0) ↔ 약한 비(가중치 0.35)
+        self.assertAlmostEqual(bad("feel_max"), 3 / ACC["temp_worst_c"])  # 체감도 기온처럼 차이 / 기준값
         score = queries.calendar(self.conn, self.city, "2026-11-01", "2026-11-01", "score", ACC)["2026-11-01"]
         self.assertEqual(score["bad"][2], round(min(1, (100 - score["values"][2]) / 50), 3))
 
@@ -97,6 +99,8 @@ class DayTest(WebDB):
         by_lead = {l["lead"]: l for l in d["leads"]}
         self.assertFalse(by_lead[2]["available"])
         self.assertEqual(by_lead[3]["diffs"]["temp_max"], -3.0)
+        self.assertEqual(by_lead[3]["diffs"]["feel_max"], -3.0)
+        self.assertEqual(by_lead[3]["values"]["feel_max"], 18.0)
         self.assertEqual(by_lead[3]["diffs"]["precip"], 10.0)
         self.assertEqual(by_lead[3]["weather_match"], 0)
         self.assertEqual(by_lead[3]["weather_code"], 61)
@@ -156,11 +160,11 @@ class SeriesTest(WebDB):
             queries.series(self.conn, self.city, "2026-11-01", "2026-11-02", "temp_max", "week")
 
     def test_날씨는_값이_아니라_d0와의_변동성(self):
-        # 11/1: d0 맑음, 1일전 맑음 → 0, 3일전 약한 비(가중치 1) → 0.2. 11/2는 d0가 없어 점 없음
+        # 11/1: d0 맑음, 1일전 맑음 → 0, 3일전 약한 비(가중치 0.35) → 0.35. 11/2는 d0가 없어 점 없음
         s = queries.series(self.conn, self.city, "2026-11-01", "2026-11-03", "weather", "day")
         self.assertNotIn("0", s["leads"])  # 당일 자신의 선은 없음
         self.assertEqual(s["leads"]["1"], [["2026-11-01", 0.0]])
-        self.assertEqual(s["leads"]["3"], [["2026-11-01", 0.2]])
+        self.assertEqual(s["leads"]["3"], [["2026-11-01", 0.35]])
         self.assertEqual(s["leads"]["2"], [])
         self.assertEqual(s["leads"]["14"], [["2026-11-03", 0.0]])
 

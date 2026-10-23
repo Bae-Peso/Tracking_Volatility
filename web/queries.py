@@ -29,6 +29,8 @@ CALENDAR_METRICS = {
     "weather": ("", 2),
     "temp_max": ("℃", 1),
     "temp_min": ("℃", 1),
+    "feel_max": ("℃", 1),
+    "feel_min": ("℃", 1),
     "precip_prob": ("%p", 0),
     "precip": ("mm", 1),
 }
@@ -36,6 +38,8 @@ CALENDAR_METRICS = {
 DAY_METRICS = {
     "temp_max": ("℃", 1),
     "temp_min": ("℃", 1),
+    "feel_max": ("℃", 1),
+    "feel_min": ("℃", 1),
     "precip_prob": ("%", 0),
     "precip": ("mm", 1),
     "wind": ("km/h", 1),
@@ -46,6 +50,8 @@ DAY_METRICS = {
 SERIES_METRICS = {
     "temp_max": ("℃", 1),
     "temp_min": ("℃", 1),
+    "feel_max": ("℃", 1),
+    "feel_min": ("℃", 1),
     "precip_prob": ("%", 0),
     "precip": ("mm", 1),
     "wind": ("km/h", 1),
@@ -54,7 +60,7 @@ SERIES_METRICS = {
 }
 # 슬롯을 몇 시간씩 묶을 때 규칙 (하루 통합과 같은 규칙. 날씨는 가중치가 가장 큰 = 가장 나쁜 날씨)
 WITHIN_DAY_RULE = {
-    "temp_max": max, "temp_min": min, "precip": sum, "precip_prob": max, "wind": max, "visibility": min, "weather": max,
+    "temp_max": max, "temp_min": min, "feel_max": max, "feel_min": min, "precip": sum, "precip_prob": max, "wind": max, "visibility": min, "weather": max,
 }
 
 
@@ -80,7 +86,7 @@ def meta(acc_cfg):
         # 색 범례: 이 값이면 빨강 (badness 1)
         "worst": {
             "score": 50, "weather": 1, "temp_max": acc_cfg["temp_worst_c"], "temp_min": acc_cfg["temp_worst_c"],
-            "precip_prob": 100, "precip": acc_cfg["rain_worst_mm"],
+            "feel_max": acc_cfg["temp_worst_c"], "feel_min": acc_cfg["temp_worst_c"], "precip_prob": 100, "precip": acc_cfg["rain_worst_mm"],
         },
     }
 
@@ -131,10 +137,12 @@ def compare(d0, f, acc_cfg):
 
     return {
         "score": row["score"],
-        "weather": r3(row["weather_severity"]),
+        "weather": r3(row["weather_diff"]),
         "weather_match": row["weather_match"],
         "temp_max": r3(row["temp_max_diff"]),
         "temp_min": r3(row["temp_min_diff"]),
+        "feel_max": r3(row["feel_max_diff"]),
+        "feel_min": r3(row["feel_min_diff"]),
         "precip_prob": row["precip_prob_diff"],
         "precip": _diff(f["precip_mm"], d0["precip_mm"]),
         "precip_log": r3(row["precip_log_diff"]),
@@ -149,7 +157,7 @@ def badness(metric, c, acc_cfg):
         v = None if c["score"] is None else (100 - c["score"]) / 50
     elif metric == "weather":
         v = c["weather"]
-    elif metric in ("temp_max", "temp_min"):
+    elif metric in ("temp_max", "temp_min", "feel_max", "feel_min"):
         v = None if c[metric] is None else abs(c[metric]) / acc_cfg["temp_worst_c"]
     elif metric == "precip_prob":
         v = None if c["precip_prob"] is None else abs(c["precip_prob"]) / 100
@@ -174,8 +182,8 @@ def _day_forecasts(conn, city_id, start, end):
 
 def _d0_value(metric, d0):
     """주간 표 '당일' 열에 보여줄 실제 예보 값. 점수·날씨 변동성은 기준 자신이라 없음."""
-    return {"temp_max": d0["temp_max"], "temp_min": d0["temp_min"], "precip_prob": d0["precip_prob"],
-            "precip": d0["precip_mm"]}.get(metric)
+    return {"temp_max": d0["temp_max"], "temp_min": d0["temp_min"], "feel_max": d0["feel_max"],
+            "feel_min": d0["feel_min"], "precip_prob": d0["precip_prob"], "precip": d0["precip_mm"]}.get(metric)
 
 
 def calendar(conn, city_id, start, end, metric, acc_cfg):
@@ -228,7 +236,8 @@ def day(conn, city_id, target, acc_cfg):
             "available": True,
             "weather_code": f["weather_code"],
             "values": {
-                "temp_max": f["temp_max"], "temp_min": f["temp_min"], "precip_prob": f["precip_prob"],
+                "temp_max": f["temp_max"], "temp_min": f["temp_min"], "feel_max": f["feel_max"],
+                "feel_min": f["feel_min"], "precip_prob": f["precip_prob"],
                 "precip": f["precip_mm"], "wind": f["wind_kmh"],
                 "visibility": None if f["visibility_m"] is None else round(f["visibility_m"] / 1000, 2),
                 "weather": None,  # 날씨는 값 자체가 없다. d0와 비교한 변동성(diffs)만
@@ -287,10 +296,10 @@ def series(conn, city_id, start, end, metric, step, hours=1):
 
 
 def _weather_vs_d0(agg):
-    """날씨 가중치(묶음의 최댓값) → 같은 시각 d0와의 변동성 |n일전 − d0| / 5 (accuracy와 같은 식).
+    """날씨 가중치(묶음의 최댓값) → 같은 시각 d0와의 변동성 |n일전 − d0| (accuracy와 같은 식).
     d0 자신의 선은 없고, d0가 아직 없는 시각(수집 2일째 전)은 점이 없다."""
     d0 = agg.pop(0, {})
-    return {n: {x: abs(v - d0[x]) / 5 for x, v in xs.items() if v is not None and d0.get(x) is not None}
+    return {n: {x: abs(v - d0[x]) for x, v in xs.items() if v is not None and d0.get(x) is not None}
             for n, xs in agg.items()}
 
 

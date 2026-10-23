@@ -1,12 +1,12 @@
-"""WMO 날씨 코드 → 카테고리 / 가중치 (weather_code.json, weather_severity.json)."""
+"""WMO 날씨 코드 → 카테고리 / 가중치 (weather_code.json, weather_weight.json)."""
 
 import json
 
 from .config import ROOT
 
-# WMO 코드 → {category, en, ko, ja} / {x, y}
+# WMO 코드 → {category, en, ko, ja} / 가중치
 WEATHER_CODES = json.loads((ROOT / "weather_code.json").read_text(encoding="utf-8"))
-SEVERITY_XY = json.loads((ROOT / "weather_severity.json").read_text(encoding="utf-8"))
+WEIGHTS = json.loads((ROOT / "weather_weight.json").read_text(encoding="utf-8"))
 
 
 def category(code):
@@ -16,9 +16,8 @@ def category(code):
 
 
 def weight(code):
-    """WMO 코드 → 가중치 0~5 (원점~(x,y) 넓이). 모르는 코드는 0."""
-    xy = SEVERITY_XY.get(str(code))
-    return xy["x"] * xy["y"] / 15 * 5 if xy else 0.0
+    """WMO 코드 → 가중치 0~1: 이동·안전에 주는 영향 (시야, 눈, 빙판, 돌풍, 뇌우). 모르는 코드는 0."""
+    return WEIGHTS.get(str(code), 0.0)
 
 
 def representative(codes):

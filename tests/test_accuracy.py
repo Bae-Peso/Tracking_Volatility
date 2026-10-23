@@ -9,11 +9,13 @@ from tests.fakes import cfg
 ACC = cfg()["accuracy"]
 
 
-def forecast(lead, code=0, temp_max=20.0, temp_min=10.0, precip_mm=0.0, precip_prob=0):
+def forecast(lead, code=0, temp_max=20.0, temp_min=10.0, precip_mm=0.0, precip_prob=0, feel_max=None, feel_min=None):
+    """체감온도를 안 주면 기온과 같다."""
     return {
         "target_date": "2026-11-01", "city_id": "c1", "source": "open-meteo", "lead_days": lead,
         "weather": codes.category(code), "weather_code": code,
         "temp_max": temp_max, "temp_min": temp_min, "precip_mm": precip_mm, "precip_prob": precip_prob,
+        "feel_max": temp_max if feel_max is None else feel_max, "feel_min": temp_min if feel_min is None else feel_min,
     }
 
 
@@ -26,7 +28,7 @@ class AccuracyRowsTest(unittest.TestCase):
         (r,) = accuracy.accuracy_rows([forecast(0), forecast(3)], ACC, "t")
         self.assertEqual(r["score"], 100.0)
         self.assertEqual(r["weather_match"], 1)
-        self.assertEqual((r["temp_max_diff"], r["precip_prob_diff"], r["weather_severity"]), (0, 0, 0))
+        self.assertEqual((r["temp_max_diff"], r["feel_max_diff"], r["precip_prob_diff"], r["weather_diff"]), (0, 0, 0, 0))
 
     def test_차이_계산과_점수(self):
         d0 = forecast(0, code=0, temp_max=20.0, temp_min=10.0, precip_mm=0.0, precip_prob=0)
@@ -37,19 +39,27 @@ class AccuracyRowsTest(unittest.TestCase):
         self.assertEqual(r["temp_min_diff"], -1.0)
         self.assertEqual(r["precip_prob_diff"], 50)
         self.assertAlmostEqual(r["precip_log_diff"], math.log1p(10.0))
-        self.assertAlmostEqual(r["weather_severity"], 1.0 / 5)  # 가중치 1.0 차이
-        # 온도 (2+1)/2/5 = 0.3, 확률 0.5, 강수 1.0(최악), 날씨 0.2 → 100 × (1 − 0.25 × 2.0) = 50
-        self.assertEqual(r["score"], 50.0)
+        self.assertEqual((r["feel_max_diff"], r["feel_min_diff"]), (2.0, -1.0))
+        self.assertAlmostEqual(r["weather_diff"], 0.35)  # 맑음 0 ↔ 약한 비 0.35
+        # 기온·체감 (2+1)/2/5 = 0.3씩, 확률 0.5, 강수 1.0(최악), 날씨 0.35 → 100 × (1 − 0.2 × 2.45) = 51
+        self.assertEqual(r["score"], 51.0)
 
-    def test_같은_비라도_정도가_다르면_match는_1_severity는_반영(self):
+    def test_같은_비라도_정도가_다르면_match는_1_차이는_반영(self):
         (r,) = accuracy.accuracy_rows([forecast(0, code=65), forecast(2, code=61)], ACC, "t")
         self.assertEqual(r["weather_match"], 1)
-        self.assertAlmostEqual(r["weather_severity"], (3.0 - 1.0) / 5)
+        self.assertAlmostEqual(r["weather_diff"], 0.45 - 0.35)
 
     def test_항목별_최악은_1로_자름(self):
         (r,) = accuracy.accuracy_rows([forecast(0, temp_max=0, temp_min=0),
-                                       forecast(1, temp_max=30, temp_min=30)], ACC, "t")
-        self.assertEqual(r["score"], 75.0)  # 온도만 최악 → 100 × (1 − 0.25)
+                                       forecast(1, temp_max=30, temp_min=30, feel_max=0, feel_min=0)], ACC, "t")
+        self.assertEqual(r["score"], 80.0)  # 기온만 최악 → 100 × (1 − 0.2)
+
+    def test_기온이_같아도_체감온도가_다르면_감점(self):
+        # 기온은 그대로인데 습도·바람 예보가 바뀌어 체감이 3℃씩 달라짐 → 체감 0.6 × 0.2
+        (r,) = accuracy.accuracy_rows([forecast(0, feel_max=24.0, feel_min=6.0),
+                                       forecast(4, feel_max=27.0, feel_min=3.0)], ACC, "t")
+        self.assertEqual((r["temp_max_diff"], r["feel_max_diff"], r["feel_min_diff"]), (0, 3.0, -3.0))
+        self.assertEqual(r["score"], 88.0)
 
     def test_d0가_없으면_계산_안_함(self):
         self.assertEqual(accuracy.accuracy_rows([forecast(1), forecast(2)], ACC, "t"), [])

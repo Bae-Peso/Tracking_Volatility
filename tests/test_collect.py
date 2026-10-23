@@ -1,9 +1,12 @@
 """도시별 현지 22시 판단, 수집 → 저장 → 정확도, 실패 기록."""
 
 import copy
+import sqlite3
+import tempfile
 import unittest
 import urllib.error
 from datetime import timedelta, timezone
+from pathlib import Path
 from unittest import mock
 
 from accu_weather import accuracy, collect, db
@@ -88,13 +91,13 @@ class RunTest(unittest.TestCase):
         n_slots = self.conn.execute("SELECT COUNT(*) FROM weather WHERE slot != 'day'").fetchone()[0]
         self.assertEqual(n_slots, 360)
         acc = [tuple(r) for r in self.conn.execute("SELECT target_date, lead_days, temp_max_diff, score FROM accuracy")]
-        # 오늘(10/23)에 대한 3일 전 예보만 d0와 비교됨. 온도 (2+2)/2/5 = 0.4 × 0.25 → 90점
-        self.assertEqual(acc, [("2026-10-23", 3, 2.0, 90.0)])
+        # 오늘(10/23)에 대한 3일 전 예보만 d0와 비교됨. 기온·체감 (2+2)/2/5 = 0.4씩 × 0.2 → 84점
+        self.assertEqual(acc, [("2026-10-23", 3, 2.0, 84.0)])
 
     def test_recompute는_config_가중치를_다시_반영(self):
         run_at(self.conn, TOKYO_22)
         c = copy.deepcopy(cfg())
-        c["accuracy"]["weights"] = {"temp": 1.0, "prob": 0.0, "rain": 0.0, "weather": 0.0}
+        c["accuracy"]["weights"] = {"temp": 1.0, "feel": 0.0, "prob": 0.0, "rain": 0.0, "weather": 0.0}
         self.assertEqual(accuracy.recompute(self.conn, c), 1)
         self.assertEqual(self.conn.execute("SELECT score FROM accuracy").fetchone()[0], 60.0)
 
@@ -107,6 +110,29 @@ class RunTest(unittest.TestCase):
         self.assertEqual(len(rows), 1)
         self.assertIn("Osaka", rows[0]["message"])
         self.assertIsNone(rows[0]["read_at"])
+
+
+class MigrateTest(unittest.TestCase):
+    def test_예전_스키마에_체감온도_열을_더하고_날씨_열_이름을_바꿈(self):
+        old = (db.SCHEMA.replace("  feel_max     REAL,", "").replace("  feel_min     REAL,", "")
+               .replace("  feel_max_diff    REAL,", "").replace("  feel_min_diff    REAL,", "")
+               .replace("weather_diff     REAL", "weather_severity REAL"))
+        with tempfile.TemporaryDirectory() as d:
+            path = Path(d) / "old.sqlite3"
+            raw = sqlite3.connect(path)
+            raw.executescript(old)
+            raw.execute("INSERT INTO accuracy (target_date, city_id, lead_days, weather_severity, computed_at) "
+                        "VALUES ('2026-10-23', 'c1', 1, 0.2, 't')")
+            raw.commit()
+            raw.close()
+            conn = db.connect(path)
+            cols = {t: {r["name"] for r in conn.execute(f"PRAGMA table_info({t})")} for t in ("weather", "accuracy")}
+            self.assertLessEqual({"feel_max", "feel_min"}, cols["weather"])
+            self.assertLessEqual({"feel_max_diff", "feel_min_diff", "weather_diff"}, cols["accuracy"])
+            self.assertNotIn("weather_severity", cols["accuracy"])
+            self.assertEqual(conn.execute("SELECT weather_diff FROM accuracy").fetchone()[0], 0.2)  # 값은 그대로
+            conn.close()
+            db.connect(path).close()  # 두 번 열어도 그대로
 
 
 if __name__ == "__main__":

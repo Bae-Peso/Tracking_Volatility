@@ -15,6 +15,7 @@ GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
 HOURLY_VARS = [
     "weather_code",
     "temperature_2m",
+    "apparent_temperature",
     "wind_speed_10m",
     "visibility",
     "precipitation",
@@ -61,6 +62,7 @@ def to_slots(data, city_id, today, fetched_at):
     for (target, hour), chunk in sorted(groups.items()):
         code = codes.representative(chunk["weather_code"])
         temps = _values(chunk["temperature_2m"])
+        feels = _values(chunk["apparent_temperature"])
         winds = _values(chunk["wind_speed_10m"])
         vis = _values(chunk["visibility"])
         precip = _values(chunk["precipitation"])
@@ -74,6 +76,8 @@ def to_slots(data, city_id, today, fetched_at):
             "weather_code": code,
             "temp_max": max(temps) if temps else None,
             "temp_min": min(temps) if temps else None,
+            "feel_max": max(feels) if feels else None,
+            "feel_min": min(feels) if feels else None,
             "wind_kmh": max(winds) if winds else None,
             "visibility_m": min(vis) if vis else None,
             "precip_mm": round(sum(precip), 2) if precip else None,

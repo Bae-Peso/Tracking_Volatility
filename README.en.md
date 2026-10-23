@@ -5,6 +5,9 @@
 > **"How much can you trust a 14-day weather forecast?"**
 > A self-hosted tool that records every day how the forecast for the same date changes from 14 days out to the day itself, and compares how many days ahead a forecast becomes reliable.
 
+> I did the initial planning, the architecture, the formula ideas such as how weather change is measured, and the choice of what to display (the overall design of the program) myself,
+> and wrote the code with the help of AI.
+
 Every day at **22:00 local time in each city**, it fetches a 15-day forecast for each registered city from [Open-Meteo](https://open-meteo.com/) and stores it in SQLite.
 For each date it scores "how far the n-days-before forecast (1–14) was from that day's 22:00 forecast",
 and the web viewer shows the daily results as they are, or compares the same lead across weeks, months and years.
@@ -16,11 +19,11 @@ and the web viewer shows the daily results as they are, or compares the same lea
 ## Features
 
 - **Collection**: fetches each city's 15-day forecast (hourly) at local 22:00 and stores it as hourly slots plus a daily summary. On failure it retries 30 minutes later and logs the error
-- **Accuracy**: for each date × lead (1–14 days before), the difference from the same-day forecast (temperature, precipitation probability, precipitation, weather) and an overall score
+- **Accuracy**: for each date × lead (1–14 days before), the difference from the same-day forecast (temperature, feels-like temperature, precipitation probability, precipitation, weather) and an overall score
 - **Web viewer** (read-only)
   - Calendar: week (same day + 14 lead values), month (a 14-cell color strip per date), year (color relative to the other days of that year)
   - Day view: how far each forecast from 14 days before → the day itself was from the same-day forecast (chart / table)
-  - Graphs: 1·2·4·8·16 split panels, synced cursor across panels, high and low temperature together, point step from 1 hour to 1 month, wheel zoom and drag to pan (up to 2 years)
+  - Graphs: 1·2·4·8·16 split panels, synced cursor across panels, high and low temperature or feels-like temperature together, point step from 1 hour to 1 month, wheel zoom and drag to pan (up to 2 years)
   - 한국어 / English / 日本語, light and dark themes, phone layout
 - **Setup TUI** (Korean, English, Japanese): search, add and unregister cities, register automatic runs
 - **Docker Compose** runs the collector, web and nginx together and restarts them after a reboot
@@ -54,7 +57,8 @@ The full record and the reasons behind each change (v1 → v8) are in [PLAN.md](
 - **The same-day 22:00 forecast as the reference instead of ground truth** — rather than collecting observations separately, the project focuses on how much the forecast wavered. For hours that have already passed, the forecast issued that night is effectively an observation.
 - **Collect at 22:00 local time per city** — fetching every city at one moment would give "same-day forecast" a different meaning per city (22:00 in Seoul is 09:00 in New York). So the collector wakes every 30 minutes and fetches only the cities that have passed local 22:00. Daylight saving time is handled by `zoneinfo`.
 - **Accuracy stored as one row per date × lead** — the first design had one range-based score per date, but it lost the lead information and was biased: days with missed collections had a narrower range and scored better. Storing each lead separately makes monthly and yearly averages such as "accuracy of 7-day-ahead forecasts in November" fall out naturally.
-- **Measuring how much the weather changed** — WMO weather code numbers are not ordered by severity (e.g. 77 snow grains > 75 heavy snow), so each code gets (kind, intensity) coordinates and the area between them is used as the weight. Clear → cloudy costs a little, clear → thunderstorm costs a lot. Precipitation is compared on a log scale so that 0 → 1 mm counts for more than 10 → 11 mm.
+- **Score items split by how they affect people** — temperature (heat and cold), feels-like temperature (humidity, wind and sun), precipitation probability and amount (getting wet) and weather (travel and safety) are combined at 0.2 each. They are split so that their effects do not overlap and the same forecast miss is not penalized twice. Precipitation is compared on a log scale so that 0 → 1 mm counts for more than 10 → 11 mm.
+- **Weather weights chosen from data** — the first version gave each weather code (kind, intensity) coordinates and used their area, but codes of different kinds with the same area came out as no change. Averaging visibility, snow, ice and gusts per code over 28 days of hourly forecasts for 24 cities showed that the drizzle and rain codes are effectively precipitation bands, and that rain vs snow is decided by temperature. So the weather item only measures the impact on travel and safety that precipitation and temperature miss (0–1, fog 0.8, thunderstorm 0.75 …), and codes without data and lightning risk were set by judgment ([`tools/weight_study.py`](tools/weight_study.py), PLAN.md 5.1).
 - **Aggregation rules** — when graphs group points into 3 hours, 6 hours or a day, the high is the maximum, the low is the minimum and precipitation is the sum. When grouping several days, it takes the mean of the daily highs (average high), avoiding the mistake of averaging hourly temperatures.
 - **`city_id` is a UUID** — the key survives renaming a city or correcting its coordinates, and a city exported from one DB and imported into another stays the same city.
 - **One writer, read-only web** — only the collector writes, which keeps SQLite concurrency simple. The web opens the DB with `mode=ro`, and since WAL would require the reader to write files too, it uses the default journal mode with a busy timeout.
@@ -140,7 +144,8 @@ web/                 web viewer: app.py (Flask), queries.py (data), templates/, 
 tests/               unittest (collection, accuracy, scheduler, TUI, web, i18n files)
 config.toml          collection time and range, accuracy weights and thresholds
 weather_code.json    WMO weather code → category, names (ko/en/ja)
-weather_severity.json  WMO weather code → (kind, intensity) coordinates
+weather_weight.json  WMO weather code → weight 0–1 (impact on travel and safety)
+tools/weight_study.py  analysis used to choose the weights (data from many cities → impact per code)
 Dockerfile, web/Dockerfile, compose.yaml, run.sh
 PLAN.md              design record (v1 – v8, decisions; Korean)
 ```

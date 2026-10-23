@@ -753,7 +753,7 @@ function dayTable(data) {
 // 한 그래프에 커서를 올리면 다른 분할에도 같은 시각에 세로선·툴팁이 뜬다.
 // 점 하나의 단위(1시간 ~ 1달)는 사용자가 고른다 (자동으로 바뀌지 않음).
 // 하루 이하 단위는 서버가 1시간 슬롯을 묶어서 준다('slot' + hours): 하루 통합과 같은 규칙
-//   (최고기온 최대, 최저기온 최소, 강수량 합계, 강수확률·바람 최대, 가시거리 최소).
+//   (최고기온·체감 최대, 최저기온·체감 최소, 강수량 합계, 강수확률·바람 최대, 가시거리 최소).
 // 1일은 하루 통합 값('day') 그대로, 3일·1주·1달은 화면이 그것을 묶는다: 하루 값의 평균 (평균 최고·최저기온), 강수량은 합계
 // 휠: 확대·축소 / Shift+휠, 가로 휠, 끌기: 앞뒤 이동.
 
@@ -773,8 +773,11 @@ const BINS = [
   { key: "1m", ms: 30 * DAY, src: "day", maxDays: MAX_BACK_DAYS + AHEAD_DAYS },
 ];
 const SLOT_MARGIN = 14 * DAY; // 시간 단위 값은 보이는 기간 앞뒤로 더 받아 둠
-// 여러 항목을 한 그래프에: 최고·최저기온 (선 a = 최고, 선 b = 최저)
-const COMPOSITE = { temp_range: { key: "temp_range", unit: "℃", digits: 1, parts: ["temp_max", "temp_min"] } };
+// 여러 항목을 한 그래프에: 최고·최저기온, 최고·최저 체감온도 (선 a = 최고, 선 b = 최저)
+const COMPOSITE = {
+  temp_range: { key: "temp_range", unit: "℃", digits: 1, parts: ["temp_max", "temp_min"] },
+  feel_range: { key: "feel_range", unit: "℃", digits: 1, parts: ["feel_max", "feel_min"] },
+};
 const PART_KEYS = ["part_max", "part_min"];
 
 const graph = {
@@ -793,11 +796,12 @@ const xValue = (x) => Date.parse(x.length === 10 ? x + "T00:00:00Z" : x + ":00Z"
 const isoOf = (ms) => new Date(ms).toISOString().slice(0, 10);
 const seriesMetric = (key) => COMPOSITE[key] || state.meta.series_metrics.find((m) => m.key === key);
 const metricParts = (m) => m.parts || [m.key];
-const seriesMetricList = () => { // 최고·최저기온은 최저기온 바로 뒤에
+const seriesMetricList = () => { // 최고·최저는 최저 바로 뒤에
   const list = [];
   for (const m of state.meta.series_metrics) {
     list.push(m);
     if (m.key === "temp_min") list.push(COMPOSITE.temp_range);
+    if (m.key === "feel_min") list.push(COMPOSITE.feel_range);
   }
   return list;
 };

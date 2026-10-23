@@ -14,7 +14,7 @@ RUN pip install --no-cache-dir tzdata -r /tmp/requirements.txt
 WORKDIR /app
 COPY accu_weather/ accu_weather/
 COPY web/ web/
-COPY weather_code.json weather_severity.json config.toml ./
+COPY weather_code.json weather_weight.json config.toml ./
 
 EXPOSE 8000
 CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "2", "--access-logfile", "-", "web.app:create_app()"]

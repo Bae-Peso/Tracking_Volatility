@@ -20,6 +20,8 @@ def day_rows(slot_rows):
         code = codes.representative(r["weather_code"] for r in slots)
         temp_max = _values(slots, "temp_max")
         temp_min = _values(slots, "temp_min")
+        feel_max = _values(slots, "feel_max")
+        feel_min = _values(slots, "feel_min")
         wind = _values(slots, "wind_kmh")
         vis = _values(slots, "visibility_m")
         precip = _values(slots, "precip_mm")
@@ -33,6 +35,8 @@ def day_rows(slot_rows):
             "weather_code": code,
             "temp_max": max(temp_max) if temp_max else None,
             "temp_min": min(temp_min) if temp_min else None,
+            "feel_max": max(feel_max) if feel_max else None,
+            "feel_min": min(feel_min) if feel_min else None,
             "wind_kmh": max(wind) if wind else None,
             "visibility_m": min(vis) if vis else None,
             "precip_mm": round(sum(precip), 2) if precip else None,

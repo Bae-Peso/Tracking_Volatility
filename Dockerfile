@@ -13,7 +13,7 @@ RUN pip install --no-cache-dir tzdata
 
 WORKDIR /app
 COPY accu_weather/ accu_weather/
-COPY weather_code.json weather_severity.json config.toml ./
+COPY weather_code.json weather_weight.json config.toml ./
 
 # `docker compose run --rm collector setup` 처럼 뒤에 붙인 명령이 serve 대신 들어간다
 ENTRYPOINT ["python3", "-m", "accu_weather"]

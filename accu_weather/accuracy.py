@@ -18,15 +18,21 @@ def _log_diff(a, b):
 
 def score(row, cfg):
     """0~100. 항목마다 0(d0와 같음)~1(기준값 이상 차이)로 만든 뒤 가중 합을 뺀다. 값이 빠졌으면 None."""
-    parts = (row["temp_max_diff"], row["temp_min_diff"], row["precip_prob_diff"],
-             row["precip_log_diff"], row["weather_severity"])
+    parts = (row["temp_max_diff"], row["temp_min_diff"], row["feel_max_diff"], row["feel_min_diff"],
+             row["precip_prob_diff"], row["precip_log_diff"], row["weather_diff"])
     if any(p is None for p in parts):
         return None
     w = cfg["weights"]
-    temp = min((abs(row["temp_max_diff"]) + abs(row["temp_min_diff"])) / 2 / cfg["temp_worst_c"], 1.0)
+
+    def degrees(hi, lo):  # 최고·최저 차이의 평균을 기준값으로 나눔
+        return min((abs(hi) + abs(lo)) / 2 / cfg["temp_worst_c"], 1.0)
+
+    temp = degrees(row["temp_max_diff"], row["temp_min_diff"])
+    feel = degrees(row["feel_max_diff"], row["feel_min_diff"])
     prob = min(abs(row["precip_prob_diff"]) / 100.0, 1.0)
     rain = min(abs(row["precip_log_diff"]) / math.log1p(cfg["rain_worst_mm"]), 1.0)
-    penalty = w["temp"] * temp + w["prob"] * prob + w["rain"] * rain + w["weather"] * row["weather_severity"]
+    penalty = (w["temp"] * temp + w["feel"] * feel + w["prob"] * prob + w["rain"] * rain
+               + w["weather"] * row["weather_diff"])
     return round(100 * (1 - penalty), 1)
 
 
@@ -47,10 +53,12 @@ def accuracy_rows(forecasts, cfg, computed_at):
             "source": f["source"],
             "weather_match": None if f["weather"] is None or d0["weather"] is None
                              else int(f["weather"] == d0["weather"]),
-            "weather_severity": None if f["weather_code"] is None or d0["weather_code"] is None
-                                else abs(codes.weight(f["weather_code"]) - codes.weight(d0["weather_code"])) / 5,
+            "weather_diff": None if f["weather_code"] is None or d0["weather_code"] is None
+                            else abs(codes.weight(f["weather_code"]) - codes.weight(d0["weather_code"])),
             "temp_max_diff": _diff(f["temp_max"], d0["temp_max"]),
             "temp_min_diff": _diff(f["temp_min"], d0["temp_min"]),
+            "feel_max_diff": _diff(f["feel_max"], d0["feel_max"]),
+            "feel_min_diff": _diff(f["feel_min"], d0["feel_min"]),
             "precip_prob_diff": _diff(f["precip_prob"], d0["precip_prob"]),
             "precip_log_diff": _log_diff(f["precip_mm"], d0["precip_mm"]),
             "computed_at": computed_at,
