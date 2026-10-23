@@ -748,18 +748,19 @@ function dayTable(data) {
 // ---------- 그래프 모드 ----------
 // 분할(1·2·4·8·16)마다 도시·항목을 따로 고르고, 보이는 기간은 모든 그래프가 함께 움직인다.
 // 한 그래프에 커서를 올리면 다른 분할에도 같은 시각에 세로선·툴팁이 뜬다.
-// 점 하나의 단위(3시간 ~ 1달)는 사용자가 고른다 (자동으로 바뀌지 않음).
-// 서버에서는 3시간 값('slot')과 하루 통합 값('day')만 받고, 6·12시간은 slot을, 3일·1주·1달은 day를 묶는다:
-//   하루 이하 단위: 하루 통합과 같은 규칙 (최고기온 최대, 최저기온 최소, 강수량 합계, 강수확률·바람 최대, 가시거리 최소)
-//   여러 날 단위:  하루 값의 평균 (평균 최고·최저기온), 강수량은 합계
+// 점 하나의 단위(1시간 ~ 1달)는 사용자가 고른다 (자동으로 바뀌지 않음).
+// 하루 이하 단위는 서버가 1시간 슬롯을 묶어서 준다('slot' + hours): 하루 통합과 같은 규칙
+//   (최고기온 최대, 최저기온 최소, 강수량 합계, 강수확률·바람 최대, 가시거리 최소).
+// 1일은 하루 통합 값('day') 그대로, 3일·1주·1달은 화면이 그것을 묶는다: 하루 값의 평균 (평균 최고·최저기온), 강수량은 합계
 // 휠: 확대·축소 / Shift+휠, 가로 휠, 끌기: 앞뒤 이동.
 
 const MAX_BACK_DAYS = 730; // 최대 2년 전까지
 const AHEAD_DAYS = 15; // 예보가 있는 미래 (오늘 + 14일)
 const MIN_SPAN = 12 * HOUR;
 const LAYOUTS = { 1: [1, 1], 2: [2, 1], 4: [2, 2], 8: [4, 2], 16: [4, 4] }; // 열 × 행
-// maxDays: 이 단위로 한 화면에 볼 수 있는 최대 기간 (3시간 단위로 2년을 펼치면 그래프 하나에 9만 점이 되어 느려짐)
+// maxDays: 이 단위로 한 화면에 볼 수 있는 최대 기간 (1시간 단위로 2년을 펼치면 그래프 하나에 26만 점이 되어 느려짐)
 const BINS = [
+  { key: "1h", ms: HOUR, src: "slot", maxDays: 20 },
   { key: "3h", ms: 3 * HOUR, src: "slot", maxDays: 60 },
   { key: "6h", ms: 6 * HOUR, src: "slot", maxDays: 120 },
   { key: "12h", ms: 12 * HOUR, src: "slot", maxDays: 240 },
@@ -768,9 +769,7 @@ const BINS = [
   { key: "1w", ms: 7 * DAY, src: "day", maxDays: MAX_BACK_DAYS + AHEAD_DAYS },
   { key: "1m", ms: 30 * DAY, src: "day", maxDays: MAX_BACK_DAYS + AHEAD_DAYS },
 ];
-const SLOT_MARGIN = 14 * DAY; // 3시간 값은 보이는 기간 앞뒤로 더 받아 둠
-// 묶을 때 규칙 (하루 이하 단위). 여러 날 단위는 강수량만 합계, 나머지는 평균
-const WITHIN_DAY_RULE = { temp_max: "max", temp_min: "min", precip: "sum", precip_prob: "max", wind: "max", visibility: "min", weather: "max" };
+const SLOT_MARGIN = 14 * DAY; // 시간 단위 값은 보이는 기간 앞뒤로 더 받아 둠
 // 여러 항목을 한 그래프에: 최고·최저기온 (선 a = 최고, 선 b = 최저)
 const COMPOSITE = { temp_range: { key: "temp_range", unit: "℃", digits: 1, parts: ["temp_max", "temp_min"] } };
 const PART_KEYS = ["part_max", "part_min"];
@@ -784,7 +783,7 @@ const graph = {
   view: null, // {min, max} ms
   charts: [], // 분할마다 {chart, box, table}
 };
-const sourceCache = new Map(); // "도시|항목|slot·day" → {start, end, version, leads: {n: [{x, y}]}}
+const sourceCache = new Map(); // "도시|항목|slot1·slot3…·day" → {start, end, version, leads: {n: [{x, y}]}}
 const binCache = new Map(); // "도시|항목|단위" → {version, leads}
 
 const xValue = (x) => Date.parse(x.length === 10 ? x + "T00:00:00Z" : x + ":00Z");
@@ -959,27 +958,30 @@ function updateLeadButtons() {
 
 // ---- 데이터: 보이는 기간에 맞춰 필요한 만큼 ----
 
-const sourceKey = (cityId, metric, src) => `${cityId}|${metric}|${src}`;
+const binSource = (bin) => (bin.src === "day" ? "day" : `slot${bin.ms / HOUR}`);
+const sourceKey = (cityId, metric, bin) => `${cityId}|${metric}|${binSource(bin)}`;
 
-function wantedRange(src) {
+function wantedRange(bin) {
   const [lo, hi] = bounds();
-  if (src === "day") return [lo, hi]; // 하루 값은 2년치를 한 번에 (도시·항목당 수백 KB)
+  if (bin.src === "day") return [lo, hi]; // 하루 값은 2년치를 한 번에 (도시·항목당 수백 KB)
   const margin = Math.max(SLOT_MARGIN, (graph.view.max - graph.view.min) / 2);
   return [Math.max(lo, graph.view.min - margin), Math.min(hi, graph.view.max + margin)];
 }
 
 const inflight = new Map();
 let sourceVersion = 0;
-async function ensureSource(cityId, metric, src) {
-  const key = sourceKey(cityId, metric, src);
-  const [lo, hi] = wantedRange(src);
+async function ensureSource(cityId, metric, bin) {
+  const key = sourceKey(cityId, metric, bin);
+  const [lo, hi] = wantedRange(bin);
   const have = sourceCache.get(key);
   if (have && have.start <= lo && have.end >= hi) return false;
   const reqKey = `${key}|${isoOf(lo)}|${isoOf(hi)}`;
   if (inflight.has(reqKey)) return inflight.get(reqKey);
   const job = (async () => {
-    const data = await api("series", { city: cityId, metric, step: src, start: isoOf(lo), end: isoOf(hi) });
-    const stepMs = src === "day" ? DAY : 3 * HOUR;
+    const params = { city: cityId, metric, step: bin.src, start: isoOf(lo), end: isoOf(hi) };
+    if (bin.src === "slot") params.hours = bin.ms / HOUR;
+    const data = await api("series", params);
+    const stepMs = bin.src === "day" ? DAY : bin.ms;
     const leads = {};
     for (const [n, rows] of Object.entries(data.leads)) leads[n] = toPoints(rows.map(([x, y]) => [xValue(x), y]), stepMs);
     sourceCache.set(key, { start: lo, end: hi, version: ++sourceVersion, leads });
@@ -994,7 +996,7 @@ const loadVisible = debounce(async () => {
   try {
     const jobs = [];
     for (const p of graph.panels.slice(0, graph.count)) {
-      for (const metric of metricParts(seriesMetric(p.metric))) jobs.push(ensureSource(p.city, metric, graph.bin.src));
+      for (const metric of metricParts(seriesMetric(p.metric))) jobs.push(ensureSource(p.city, metric, graph.bin));
     }
     const changed = await Promise.all(jobs);
     showError(null);
@@ -1028,19 +1030,17 @@ function binNext(x, bin) {
   return x + bin.ms;
 }
 
-// 원본(3시간 또는 하루 통합)을 고른 단위로 묶는다 (규칙은 맨 위 주석)
+// 여러 날 단위만 하루 통합 값을 묶는다 (규칙은 맨 위 주석). 하루 이하 단위는 서버가 묶어 준 그대로
 function aggregate(points, bin, metric) {
-  if (bin.key === "3h" || bin.key === "1d") return points; // 원본 그대로
-  const rule = bin.ms <= DAY ? WITHIN_DAY_RULE[metric] : metric === "precip" ? "sum" : "mean";
+  if (bin.ms <= DAY) return points;
+  const rule = metric === "precip" ? "sum" : "mean";
   const acc = new Map();
   for (const { x, y } of points) {
     if (y === null) continue;
     const k = binStart(x, bin);
     const a = acc.get(k);
     if (!a) acc.set(k, { v: y, n: 1 });
-    else if (rule === "max") a.v = Math.max(a.v, y);
-    else if (rule === "min") a.v = Math.min(a.v, y);
-    else { a.v += y; a.n += 1; } // sum, mean
+    else { a.v += y; a.n += 1; }
   }
   const rows = [...acc.entries()].sort((a, b) => a[0] - b[0])
     .map(([x, { v, n }]) => [x, rule === "mean" ? v / n : v]);
@@ -1050,7 +1050,7 @@ function aggregate(points, bin, metric) {
 // 분할 하나의 데이터: 항목의 각 부분(최고·최저기온이면 둘)마다 {n일 전: 점 배열}
 function binned(p, bin) {
   return metricParts(seriesMetric(p.metric)).map((metric) => {
-    const src = sourceCache.get(sourceKey(p.city, metric, bin.src));
+    const src = sourceCache.get(sourceKey(p.city, metric, bin));
     if (!src) return null;
     const key = `${p.city}|${metric}|${bin.key}`;
     const have = binCache.get(key);
@@ -1074,7 +1074,7 @@ function sliceRange(points, from, to) {
 // ---- 그리기 ----
 
 const pad2 = (n) => String(n).padStart(2, "0");
-// 눈금: 점이 3일·1주·1달 단위면 점과 같은 자리(구간 시작)에, 아니면 자정·3시간 등 보기 좋은 간격으로
+// 눈금: 점이 3일·1주·1달 단위면 점과 같은 자리(구간 시작)에, 아니면 자정·1시간 등 보기 좋은 간격으로
 function niceTicks(min, max, width) {
   const span = max - min;
   const maxTicks = Math.max(2, Math.floor(width / 80));
@@ -1094,7 +1094,7 @@ function niceTicks(min, max, width) {
     for (let x = binStart(min, bin); x <= max; x += every * bin.ms) if (x >= min) ticks.push({ value: x });
     return ticks;
   }
-  const step = [3 * HOUR, 6 * HOUR, 12 * HOUR, DAY, 2 * DAY, 7 * DAY, 14 * DAY]
+  const step = [HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, DAY, 2 * DAY, 7 * DAY, 14 * DAY]
     .filter((s) => s >= bin.ms).find((s) => span / s <= maxTicks) || 14 * DAY;
   for (let x = Math.ceil(min / step) * step; x <= max; x += step) ticks.push({ value: x });
   return ticks;
@@ -1113,8 +1113,8 @@ function pointLabel(ms, bin) {
   const d = new Date(ms);
   const end = new Date(binNext(ms, bin) - 1);
   switch (bin.key) {
-    case "3h": return `${dateLabel(d)} ${t("hour", { h: pad2(d.getUTCHours()) })}`;
-    case "6h": case "12h": return `${dateLabel(d)} ${t("hour", { h: pad2(d.getUTCHours()) })}–${t("hour", { h: pad2(end.getUTCHours() + 1) })}`;
+    case "1h": return `${dateLabel(d)} ${t("hour", { h: pad2(d.getUTCHours()) })}`;
+    case "3h": case "6h": case "12h": return `${dateLabel(d)} ${t("hour", { h: pad2(d.getUTCHours()) })}–${t("hour", { h: pad2(end.getUTCHours() + 1) })}`;
     case "1d": return dateLabel(d);
     case "1m": return periodMonth(d.getUTCFullYear(), d.getUTCMonth() + 1);
     default: return `${dateLabel(d)} – ${end.getUTCMonth() + 1}/${end.getUTCDate()}`;
@@ -1217,7 +1217,7 @@ function drawGraphs() {
   const bin = graph.bin;
   $("#g-range").textContent = `${dateLabel(new Date(v.min))} – ${dateLabel(new Date(v.max))}`;
   const atMax = span >= bin.maxDays * DAY - HOUR && bin.maxDays < MAX_BACK_DAYS;
-  const how = bin.key === "3h" ? "graph_how_raw" : bin.ms <= DAY ? "graph_how_day" : "graph_how_days";
+  const how = bin.key === "1h" ? "graph_how_raw" : bin.ms <= DAY ? "graph_how_day" : "graph_how_days";
   $("#g-note").textContent = t("graph_note", { bin: binLabel(bin), how: t(how) })
     + (atMax ? ` · ${t("bin_max", { bin: binLabel(bin), days: bin.maxDays })}` : "");
   updateLeadButtons();

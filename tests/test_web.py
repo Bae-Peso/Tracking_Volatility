@@ -117,21 +117,31 @@ class SeriesTest(WebDB):
         super().setUp()
         conn = db.connect(self.path)
         slots = []
-        for day in range(1, 31):  # 11월 한 달, 당일 예보 슬롯 8개씩
-            for hour in range(0, 24, 3):
+        for day in range(1, 31):  # 11월 한 달, 당일 예보 1시간 슬롯 24개씩
+            for hour in range(24):
                 slots.append(row(self.city, f"2026-11-{day:02d}", 0, slot=f"{hour:02d}",
-                                 temp_max=float(hour), precip=0.5))
+                                 temp_max=float(hour), temp_min=float(hour), precip=0.5))
         db.upsert_weather(conn, slots)
         conn.close()
 
-    def test_3시간_단위(self):
+    def test_1시간_단위(self):
         s = queries.series(self.conn, self.city, "2026-11-01", "2026-11-14", "temp_max", "slot")
         self.assertFalse(s["daily"])
-        self.assertEqual(len(s["leads"]["0"]), 14 * 8)
-        self.assertEqual(s["leads"]["0"][:2], [["2026-11-01T00:00", 0.0], ["2026-11-01T03:00", 3.0]])
+        self.assertEqual(len(s["leads"]["0"]), 14 * 24)
+        self.assertEqual(s["leads"]["0"][:2], [["2026-11-01T00:00", 0.0], ["2026-11-01T01:00", 1.0]])
+
+    def test_여러_시간으로_묶기는_하루_통합과_같은_규칙(self):
+        s = queries.series(self.conn, self.city, "2026-11-01", "2026-11-01", "temp_max", "slot", hours=3)
+        self.assertEqual(s["leads"]["0"][:2], [["2026-11-01T00:00", 2.0], ["2026-11-01T03:00", 5.0]])
+        lo = queries.series(self.conn, self.city, "2026-11-01", "2026-11-01", "temp_min", "slot", hours=12)
+        self.assertEqual(lo["leads"]["0"], [["2026-11-01T00:00", 0.0], ["2026-11-01T12:00", 12.0]])
+        rain = queries.series(self.conn, self.city, "2026-11-01", "2026-11-01", "precip", "slot", hours=6)
+        self.assertEqual([v for _, v in rain["leads"]["0"]], [3.0] * 4)
+        with self.assertRaises(ValueError):
+            queries.series(self.conn, self.city, "2026-11-01", "2026-11-01", "temp_max", "slot", hours=5)
 
     def test_하루_단위는_일간_보기와_같은_하루_통합_값(self):
-        # 3시간 슬롯을 평균내지 않고, 저장된 하루 통합 행(최고기온 = 그날 최대)을 그대로 쓴다
+        # 1시간 슬롯을 평균내지 않고, 저장된 하루 통합 행(최고기온 = 그날 최대)을 그대로 쓴다
         s = queries.series(self.conn, self.city, "2026-11-01", "2026-11-21", "temp_max", "day")
         self.assertTrue(s["daily"])
         self.assertEqual(s["leads"]["0"], [["2026-11-01", 20.0], ["2026-11-03", 15.0]])
@@ -190,6 +200,8 @@ class ApiTest(WebDB):
         self.assertEqual(len(d["leads"]), 15)
         s = self.client.get(f"/api/series?city={self.city}&start=2026-11-01&end=2026-11-02&metric=wind")
         self.assertEqual(s.status_code, 200)
+        s6 = self.client.get(f"/api/series?city={self.city}&start=2026-11-01&end=2026-11-02&metric=wind&hours=6")
+        self.assertEqual(s6.status_code, 200)
         two_years = self.client.get(f"/api/series?city={self.city}&start=2024-10-23&end=2026-11-06&metric=temp_max&step=day")
         self.assertEqual(two_years.status_code, 200)
         self.assertTrue(two_years.get_json()["daily"])
@@ -206,7 +218,8 @@ class ApiTest(WebDB):
                     f"/api/calendar?city={self.city}&start=2026-11-01&end=2026-11-02&metric=zzz",
                     f"/api/day?city={self.city}&date=11/01",
                     f"/api/series?city={self.city}&start=2020-01-01&end=2026-11-02",
-                    f"/api/series?city={self.city}&start=2026-11-01&end=2026-11-02&step=week"]:
+                    f"/api/series?city={self.city}&start=2026-11-01&end=2026-11-02&step=week",
+                    f"/api/series?city={self.city}&start=2026-11-01&end=2026-11-02&hours=5"]:
             self.assertEqual(self.client.get(url).status_code, 400, url)
 
     def test_수집_실패_알림은_미확인만_최근부터(self):

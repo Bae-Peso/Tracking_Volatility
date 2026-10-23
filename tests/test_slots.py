@@ -1,6 +1,7 @@
-"""1시간 값 → 3시간 슬롯, 슬롯 → 하루 통합."""
+"""1시간 값 → 슬롯, 슬롯 → 하루 통합."""
 
 import unittest
+from unittest import mock
 
 from accu_weather.daily import day_rows
 from accu_weather.sources import openmeteo
@@ -10,14 +11,26 @@ FETCHED = "2026-10-23T13:00:00+00:00"
 
 
 class ToSlotsTest(unittest.TestCase):
-    def test_15일이면_120슬롯_lead_0부터_14(self):
+    def test_15일이면_360슬롯_lead_0부터_14(self):
         rows = openmeteo.to_slots(hourly_data(TODAY, 15), "c1", TODAY, FETCHED)
-        self.assertEqual(len(rows), 120)
-        self.assertEqual([r["slot"] for r in rows[:8]], ["00", "03", "06", "09", "12", "15", "18", "21"])
+        self.assertEqual(len(rows), 360)
+        self.assertEqual([r["slot"] for r in rows[:24]], [f"{h:02d}" for h in range(24)])
         self.assertEqual({r["lead_days"] for r in rows}, set(range(15)))
         self.assertEqual(rows[0]["target_date"], "2026-10-23")
         self.assertEqual(rows[-1]["target_date"], "2026-11-06")
 
+    def test_1시간_슬롯은_받은_값_그대로(self):
+        data = hourly_data(TODAY, 1)
+        h = data["hourly"]
+        h["temperature_2m"][1] = 9.5
+        h["precipitation"][1] = 0.3
+        h["weather_code"][1] = 61
+        r = openmeteo.to_slots(data, "c1", TODAY, FETCHED)[1]
+        self.assertEqual(r["slot"], "01")
+        self.assertEqual((r["temp_max"], r["temp_min"], r["precip_mm"]), (9.5, 9.5, 0.3))
+        self.assertEqual((r["weather_code"], r["weather"]), (61, 4))
+
+    @mock.patch.object(openmeteo, "SLOT_HOURS", 3)
     def test_슬롯_묶는_규칙(self):
         data = hourly_data(TODAY, 1)
         h = data["hourly"]
@@ -37,6 +50,7 @@ class ToSlotsTest(unittest.TestCase):
         self.assertEqual(r["weather_code"], 61)  # 가중치가 가장 큰 코드
         self.assertEqual(r["weather"], 4)  # 비
 
+    @mock.patch.object(openmeteo, "SLOT_HOURS", 3)
     def test_빈_값은_건너뜀(self):
         data = hourly_data(TODAY, 1)
         data["hourly"]["precipitation_probability"][:3] = [None, None, None]
@@ -54,11 +68,11 @@ class DayRowsTest(unittest.TestCase):
     def test_하루_통합(self):
         data = hourly_data(TODAY, 2)
         h = data["hourly"]
-        h["temperature_2m"][5] = 20.0  # 03시 슬롯 최고
-        h["temperature_2m"][22] = -1.0  # 21시 슬롯 최저
-        h["precipitation"][10:13] = [1.0, 2.0, 0.5]  # 09시 + 12시 슬롯에 걸침
-        h["weather_code"][13] = 95  # 12시 슬롯 뇌우
-        h["weather_code"][14] = 65  # 같은 슬롯 강한 비 (가중치 3.0 < 뇌우 3.33)
+        h["temperature_2m"][5] = 20.0  # 05시 최고
+        h["temperature_2m"][22] = -1.0  # 22시 최저
+        h["precipitation"][10:13] = [1.0, 2.0, 0.5]  # 10~12시
+        h["weather_code"][13] = 95  # 13시 뇌우
+        h["weather_code"][14] = 65  # 14시 강한 비 (가중치 3.0 < 뇌우 3.33)
         days = day_rows(openmeteo.to_slots(data, "c1", TODAY, FETCHED))
         self.assertEqual(len(days), 2)
         d0 = next(d for d in days if d["lead_days"] == 0)

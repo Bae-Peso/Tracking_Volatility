@@ -1,4 +1,4 @@
-"""Open-Meteo 예보 요청 + 1시간 값을 3시간 슬롯으로 묶기, 도시 검색."""
+"""Open-Meteo 예보 요청 + 1시간 값을 슬롯 행으로 바꾸기, 도시 검색."""
 
 import json
 import urllib.parse
@@ -8,7 +8,7 @@ from datetime import datetime
 from .. import codes
 
 SOURCE = "open-meteo"
-SLOT_HOURS = 3
+SLOT_HOURS = 1  # 슬롯 하나의 시간 수 (1이면 받은 값 그대로, 3이면 3시간씩 묶음)
 
 FORECAST_URL = "https://api.open-meteo.com/v1/forecast"
 GEOCODING_URL = "https://geocoding-api.open-meteo.com/v1/search"
@@ -47,7 +47,7 @@ def _values(xs):
 
 
 def to_slots(data, city_id, today, fetched_at):
-    """1시간 값을 3시간 슬롯 행으로 묶는다. today는 수집 시점의 도시 현지 날짜."""
+    """1시간 값을 SLOT_HOURS 슬롯 행으로 묶는다. today는 수집 시점의 도시 현지 날짜."""
     hourly = data["hourly"]
     groups = {}
     for i, t in enumerate(hourly["time"]):

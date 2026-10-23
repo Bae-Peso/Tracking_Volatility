@@ -115,12 +115,15 @@ def create_app(db_path=None):
             start, end = arg_range(queries.SERIES_MAX_DAYS)
             metric = arg("metric", "temp_max")
             step = arg("step", "slot")
+            hours = arg("hours", "1")
             if metric not in queries.SERIES_METRICS:
                 raise BadRequest("unknown_metric", metric)
             if step not in ("slot", "day"):
                 raise BadRequest("unknown_metric", step)
+            if hours not in [str(n) for n in queries.SERIES_HOURS]:
+                raise BadRequest("unknown_metric", hours)
             return {"city": c, "start": start, "end": end, "metric": metric,
-                    **queries.series(conn, c["city_id"], start, end, metric, step)}
+                    **queries.series(conn, c["city_id"], start, end, metric, step, int(hours))}
         return api(handler)
 
     return app
