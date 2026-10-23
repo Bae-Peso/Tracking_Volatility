@@ -155,6 +155,21 @@ class SeriesTest(WebDB):
         with self.assertRaises(ValueError):
             queries.series(self.conn, self.city, "2026-11-01", "2026-11-02", "temp_max", "week")
 
+    def test_날씨는_값이_아니라_d0와의_변동성(self):
+        # 11/1: d0 맑음, 1일전 맑음 → 0, 3일전 약한 비(가중치 1) → 0.2. 11/2는 d0가 없어 점 없음
+        s = queries.series(self.conn, self.city, "2026-11-01", "2026-11-03", "weather", "day")
+        self.assertNotIn("0", s["leads"])  # 당일 자신의 선은 없음
+        self.assertEqual(s["leads"]["1"], [["2026-11-01", 0.0]])
+        self.assertEqual(s["leads"]["3"], [["2026-11-01", 0.2]])
+        self.assertEqual(s["leads"]["2"], [])
+        self.assertEqual(s["leads"]["14"], [["2026-11-03", 0.0]])
+
+    def test_날씨_값은_일간_보기에도_없음(self):
+        d = queries.day(self.conn, self.city, "2026-11-02", ACC)  # d0 없음
+        lead2 = next(l for l in d["leads"] if l["lead"] == 2)
+        self.assertIsNone(lead2["values"]["weather"])
+        self.assertIsNone(lead2["diffs"])
+
     def test_하루_통합_행은_그래프에_안_들어감(self):
         s = queries.series(self.conn, self.city, "2026-11-01", "2026-11-03", "temp_max", "slot")
         self.assertNotIn("1", s["leads"])  # 1·3·14일전은 하루 통합 행만 있음

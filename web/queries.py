@@ -42,7 +42,7 @@ DAY_METRICS = {
     "visibility": ("km", 1),
     "weather": ("", 2),
 }
-# 그래프 모드 (예보 값 그대로). weather는 날씨 가중치 0 맑음 ~ 5 강한 뇌우
+# 그래프 모드 (예보 값 그대로). weather만 값이 아니라 같은 시각 d0와의 날씨 변동성 0~1 (_weather_vs_d0)
 SERIES_METRICS = {
     "temp_max": ("℃", 1),
     "temp_min": ("℃", 1),
@@ -231,7 +231,7 @@ def day(conn, city_id, target, acc_cfg):
                 "temp_max": f["temp_max"], "temp_min": f["temp_min"], "precip_prob": f["precip_prob"],
                 "precip": f["precip_mm"], "wind": f["wind_kmh"],
                 "visibility": None if f["visibility_m"] is None else round(f["visibility_m"] / 1000, 2),
-                "weather": round(codes.weight(f["weather_code"]), 2) if f["weather_code"] is not None else None,
+                "weather": None,  # 날씨는 값 자체가 없다. d0와 비교한 변동성(diffs)만
             },
             "diffs": None if c is None else {k: c[k] for k in DAY_METRICS},
             "weather_match": None if c is None else c["weather_match"],
@@ -279,9 +279,19 @@ def series(conn, city_id, start, end, metric, step, hours=1):
         if v is not None:
             values.append(v)
     rule = WITHIN_DAY_RULE[metric]
-    leads = {str(n): [[x, round(rule(vs), 3) if vs else None] for x, vs in xs.items()]
-             for n, xs in sorted(groups.items())}
+    agg = {n: {x: rule(vs) if vs else None for x, vs in xs.items()} for n, xs in sorted(groups.items())}
+    if metric == "weather":
+        agg = _weather_vs_d0(agg)
+    leads = {str(n): [[x, None if v is None else round(v, 3)] for x, v in xs.items()] for n, xs in agg.items()}
     return {"daily": daily, "leads": leads}
+
+
+def _weather_vs_d0(agg):
+    """날씨 가중치(묶음의 최댓값) → 같은 시각 d0와의 변동성 |n일전 − d0| / 5 (accuracy와 같은 식).
+    d0 자신의 선은 없고, d0가 아직 없는 시각(수집 2일째 전)은 점이 없다."""
+    d0 = agg.pop(0, {})
+    return {n: {x: abs(v - d0[x]) / 5 for x, v in xs.items() if v is not None and d0.get(x) is not None}
+            for n, xs in agg.items()}
 
 
 def clamp_range(start, end, max_days=400):

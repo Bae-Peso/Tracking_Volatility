@@ -667,7 +667,8 @@ function drawDay() {
   const available = data.leads.filter((l) => l.available);
   $("#day-sub").textContent = data.has_d0 ? t("day_sub", { wx: wxName(data.d0_weather_code) }) : t("day_sub_no_d0");
   $("#day-note").textContent = !available.length ? t("day_none")
-    : m.key === "weather" ? t("day_note_weather") : data.has_d0 ? t("day_note_diff") : "";
+    : m.key === "weather" ? t(data.has_d0 ? "day_note_weather" : "day_note_weather_no_d0")
+    : data.has_d0 ? t("day_note_diff") : "";
 
   const chartBox = $("#day-chart-box"), tableBox = $("#day-table");
   chartBox.hidden = state.day.show !== "chart";
@@ -676,7 +677,9 @@ function drawDay() {
 
   chartTheme();
   const useDiff = data.has_d0;
-  const points = data.leads.map((l) => (l.available ? (useDiff ? l.diffs[m.key] : l.values[m.key]) : null));
+  // 날씨는 d0와 비교한 변동성뿐: 당일 자신과 d0가 없는 날은 점이 없다
+  const points = data.leads.map((l) => (!l.available || (m.key === "weather" && l.lead === 0) ? null
+    : useDiff ? l.diffs[m.key] : l.values[m.key]));
   const color = css("--accent");
   const unit = m.key === "weather" ? "" : m.unit;
   if (dayChart) dayChart.destroy();
