@@ -1,0 +1,114 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>예보 변동성</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+</head>
+<body>
+<!-- 문구는 static/i18n/<언어>.json. data-i18n="키" → 글, data-i18n-aria="키" → aria-label -->
+<header class="topbar">
+  <h1 data-i18n="app_title">예보 변동성</h1>
+  <div class="seg" id="mode" role="group" data-i18n-aria="aria_mode">
+    <button type="button" data-value="calendar" data-i18n="mode_calendar">달력</button>
+    <button type="button" data-value="graph" data-i18n="mode_graph">그래프</button>
+  </div>
+  <!-- Open-Meteo 데이터 이용 조건 (CC BY 4.0): 데이터를 보여주는 곳에 출처 링크 -->
+  <a class="attribution" href="https://open-meteo.com/" target="_blank" rel="noopener" data-i18n="attribution">Weather data by Open-Meteo.com</a>
+  <select id="lang" class="lang" data-i18n-aria="aria_lang"></select>
+</header>
+
+<p id="error" class="error" hidden></p>
+
+<!-- 수집 실패 알림: "확인"하면 이 브라우저에서만 숨김 (DB 기록은 그대로) -->
+<div id="fail-banner" class="fail-banner" role="alert" hidden>
+  <span class="icon" aria-hidden="true">⚠</span>
+  <span id="fail-summary"></span>
+  <button type="button" id="fail-more" data-i18n="fail_more">자세히</button>
+  <button type="button" id="fail-ack" data-i18n="fail_ack">확인</button>
+  <ul id="fail-list" hidden></ul>
+</div>
+
+<main>
+  <!-- 달력 모드: 왼쪽 도시 목록, 오른쪽 주·월·연 달력 -->
+  <section id="calendar-mode" class="calendar-layout" hidden>
+    <aside class="city-list" id="city-list" data-i18n-aria="aria_city"></aside>
+    <div class="content">
+      <div class="toolbar">
+        <select id="city-select" class="narrow-only" data-i18n-aria="aria_city"></select>
+        <div class="seg" id="view" role="group" data-i18n-aria="aria_view">
+          <button type="button" data-value="week" data-i18n="view_week">주</button>
+          <button type="button" data-value="month" data-i18n="view_month">월</button>
+          <button type="button" data-value="year" data-i18n="view_year">연</button>
+        </div>
+        <div class="period-nav">
+          <button type="button" id="prev" data-i18n-aria="aria_prev">‹</button>
+          <button type="button" id="today" data-i18n="today">오늘</button>
+          <button type="button" id="next" data-i18n-aria="aria_next">›</button>
+          <span id="period" class="period"></span>
+        </div>
+        <label class="metric-pick"><span data-i18n="metric_label">항목</span> <select id="metric"></select></label>
+      </div>
+      <div id="calendar" class="calendar"></div>
+      <div id="legend" class="legend"></div>
+    </div>
+  </section>
+
+  <!-- 그래프 모드: n일 전별 예보 선. 1·2·4·8·16 분할, 점 단위 선택, 휠로 확대·축소, Shift+휠/끌기로 이동 -->
+  <section id="graph-mode" class="graph-mode" hidden>
+    <div class="toolbar">
+      <label><span data-i18n="split_label">분할</span>
+        <span class="seg" id="g-count" role="group" data-i18n-aria="aria_split">
+          <button type="button" data-value="1">1</button>
+          <button type="button" data-value="2">2</button>
+          <button type="button" data-value="4">4</button>
+          <button type="button" data-value="8">8</button>
+          <button type="button" data-value="16">16</button>
+        </span>
+      </label>
+      <label><span data-i18n="bin_label">단위</span>
+        <span class="seg" id="g-bin" role="group" data-i18n-aria="aria_bin"></span>
+      </label>
+      <div class="presets" id="g-presets"></div>
+      <span id="g-range" class="period"></span>
+      <div class="seg" id="g-show" role="group" data-i18n-aria="aria_show">
+        <button type="button" data-value="chart" data-i18n="show_chart">그래프</button>
+        <button type="button" data-value="table" data-i18n="show_table">표</button>
+      </div>
+    </div>
+    <p class="note" id="g-note"></p>
+    <div class="graph-layout">
+      <div class="panels" id="g-panels"></div>
+      <div class="lead-buttons" id="g-leads" role="group" data-i18n-aria="aria_leads"></div>
+    </div>
+  </section>
+</main>
+
+<!-- 일간 보기 -->
+<dialog id="day-modal" aria-labelledby="day-title">
+  <div class="modal-head">
+    <div>
+      <h2 id="day-title"></h2>
+      <p id="day-sub" class="sub"></p>
+    </div>
+    <button type="button" class="close" id="day-close" data-i18n-aria="aria_close">✕</button>
+  </div>
+  <div class="toolbar">
+    <div class="tabs" id="day-metrics" role="group" data-i18n-aria="metric_label"></div>
+    <div class="seg" id="day-show" role="group" data-i18n-aria="aria_show">
+      <button type="button" data-value="chart" data-i18n="show_chart">그래프</button>
+      <button type="button" data-value="table" data-i18n="show_table">표</button>
+    </div>
+  </div>
+  <p id="day-note" class="note"></p>
+  <div class="chart-box modal-chart" id="day-chart-box"><canvas id="day-chart"></canvas></div>
+  <div class="table-wrap" id="day-table" hidden></div>
+</dialog>
+
+<div id="tooltip" class="tooltip" role="status" hidden></div>
+
+<script src="{{ url_for('static', filename='vendor/chart.umd.min.js') }}"></script>
+<script src="{{ url_for('static', filename='app.js') }}"></script>
+</body>
+</html>

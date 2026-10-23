@@ -1,0 +1,272 @@
+/* 색은 역할(토큰)로만 쓴다. 다크 모드는 같은 램프에서 고른 별도 값. */
+:root {
+  color-scheme: light;
+  --page: #f9f9f7;
+  --surface: #fcfcfb;
+  --text: #0b0b0b;
+  --text-2: #52514e;
+  --muted: #898781;
+  --grid: #e1e0d9;
+  --axis: #c3c2b7;
+  --border: rgba(11, 11, 11, 0.10);
+  --accent: #2a78d6;
+  --accent-wash: rgba(42, 120, 214, 0.10);
+  --missing: #e1e0d9;
+  /* 변동 정도: 적음 → 많음 (상태 팔레트 good → warning → critical) */
+  --heat-0: #0ca30c;
+  --heat-1: #fab219;
+  --heat-2: #d03b3b;
+  --critical: #d03b3b; /* 상태: 수집 실패 (아이콘 + 글과 함께만) */
+  /* 당일(비교 기준) 선: n일 전 색들과 겹치지 않는 주황 (범주 2번) */
+  --d0: #eb6834;
+  /* n일 전 선: 하루 전 → 14일 전. viridis 0 ~ 0.7 (보라 → 청록 → 초록), 끝도 배경 대비 2:1 이상 */
+  --lead-ramp: #440154,#482475,#414487,#355f8d,#2a788e,#21918c,#22a884,#44bf70;
+  --radius: 8px;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --page: #0d0d0d;
+    --surface: #1a1a19;
+    --text: #f0efec;
+    --text-2: #c3c2b7;
+    --muted: #898781;
+    --grid: #2c2c2a;
+    --axis: #383835;
+    --border: rgba(255, 255, 255, 0.10);
+    --accent: #3987e5;
+    --accent-wash: rgba(57, 135, 229, 0.16);
+    --missing: #2c2c2a;
+    --d0: #d95926;
+    /* 다크: 하루 전이 가장 밝게 (노랑 → 초록 → 남청), 끝도 배경 대비 2:1 이상 */
+    --lead-ramp: #fde725,#bddf26,#7ad151,#44bf70,#22a884,#21918c,#2a788e,#355f8d;
+  }
+}
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --page: #0d0d0d;
+  --surface: #1a1a19;
+  --text: #f0efec;
+  --text-2: #c3c2b7;
+  --muted: #898781;
+  --grid: #2c2c2a;
+  --axis: #383835;
+  --border: rgba(255, 255, 255, 0.10);
+  --accent: #3987e5;
+  --accent-wash: rgba(57, 135, 229, 0.16);
+  --missing: #2c2c2a;
+  --d0: #d95926;
+  --lead-ramp: #fde725,#bddf26,#7ad151,#44bf70,#22a884,#21918c,#2a788e,#355f8d;
+}
+
+* { box-sizing: border-box; }
+[hidden] { display: none !important; } /* display: grid 등이 hidden 속성을 덮어쓰지 않게 */
+body { margin: 0; background: var(--page); color: var(--text); font-size: 14px; line-height: 1.45; }
+button, select, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+button:disabled { cursor: default; }
+h1 { font-size: 17px; margin: 0; white-space: nowrap; }
+h2 { font-size: 16px; margin: 0; }
+
+/* ---- 상단 한 줄 ---- */
+.topbar {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; padding: 10px 16px;
+  background: var(--surface); border-bottom: 1px solid var(--border); position: sticky; top: 0; z-index: 5;
+}
+.attribution { margin-left: auto; font-size: 12px; color: var(--muted); }
+.attribution:hover { color: var(--text-2); }
+.lang { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 4px 8px; }
+.error { margin: 12px 16px 0; padding: 10px 12px; border-radius: var(--radius); border: 1px solid var(--critical); }
+.fail-banner {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin: 12px 16px 0; padding: 8px 12px;
+  border: 1px solid var(--critical); border-radius: var(--radius); background: var(--surface);
+}
+.fail-banner .icon { color: var(--critical); font-weight: 700; }
+.fail-banner button { border: 1px solid var(--border); background: none; border-radius: 6px; padding: 2px 10px; }
+.fail-banner ul { flex-basis: 100%; margin: 4px 0 0; padding-left: 20px; color: var(--text-2); font-size: 12px; }
+
+/* 세그먼트 버튼 (모드, 보기, 분할, 그래프/표) */
+.seg { display: inline-flex; border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; background: var(--surface); }
+.seg button { border: 0; background: none; padding: 5px 12px; color: var(--text-2); white-space: nowrap; flex-shrink: 0; }
+.seg button + button { border-left: 1px solid var(--border); }
+.seg button[aria-pressed="true"] { background: var(--accent-wash); color: var(--text); font-weight: 600; }
+
+.toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 12px; margin-bottom: 10px; }
+.toolbar label { display: inline-flex; align-items: center; gap: 6px; color: var(--text-2); white-space: nowrap; }
+.toolbar select, .toolbar input, .period-nav button, .presets button {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 5px 8px;
+}
+.metric-pick { margin-left: auto; }
+.period-nav { display: inline-flex; align-items: center; gap: 4px; }
+.period { margin-left: 6px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.presets { display: inline-flex; gap: 4px; flex-wrap: wrap; }
+.presets button { color: var(--text-2); }
+.note { color: var(--muted); font-size: 12px; margin: 0 0 8px; }
+
+main { padding: 16px; }
+
+/* ---- 달력 모드 ---- */
+.calendar-layout { display: grid; grid-template-columns: 180px minmax(0, 1fr); gap: 16px; align-items: start; }
+.city-list { display: flex; flex-direction: column; gap: 2px; }
+.city-list button {
+  text-align: left; border: 0; background: none; padding: 7px 10px; border-radius: var(--radius); color: var(--text-2);
+}
+.city-list button:hover { background: var(--accent-wash); }
+.city-list button[aria-pressed="true"] { background: var(--surface); color: var(--text); font-weight: 600; box-shadow: inset 3px 0 0 var(--accent); }
+.city-list .country { display: block; font-size: 12px; color: var(--muted); font-weight: 400; }
+.narrow-only { display: none; }
+.content { min-width: 0; display: flex; flex-direction: column; }
+.calendar { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px; }
+.empty { color: var(--muted); padding: 24px; text-align: center; }
+
+/* 주간 표: 당일 → 하루 전 → … → 14일 전 */
+.table-wrap { overflow: auto; }
+table.grid { border-collapse: separate; border-spacing: 2px; width: 100%; font-variant-numeric: tabular-nums; }
+table.grid th { font-weight: 500; color: var(--text-2); font-size: 12px; padding: 4px 6px; white-space: nowrap; }
+table.grid td { text-align: center; padding: 6px 4px; border-radius: 4px; white-space: nowrap; }
+table.grid td.missing { color: var(--muted); }
+table.grid td.d0 { box-shadow: inset 0 0 0 1px var(--border); font-weight: 600; }
+table.grid th.d0 { color: var(--text); font-weight: 600; }
+table.grid th.row-head { text-align: left; }
+table.grid th.row-head button {
+  border: 0; background: none; padding: 2px 4px; border-radius: 4px; color: var(--text); font-weight: 600; text-align: left;
+}
+table.grid th.row-head button:hover { background: var(--accent-wash); }
+.is-today { color: var(--accent) !important; }
+
+/* 월간: 보통 달력처럼 큰 칸. 날짜, 당일 날씨·기온, 아래에 14칸 띠 (하루 전 → 14일 전) */
+.month { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 4px; }
+.month .dow { font-size: 12px; color: var(--muted); text-align: center; padding-bottom: 2px; }
+.day-cell {
+  border: 1px solid var(--border); border-radius: 6px; background: none; padding: 6px 8px; min-height: 72px; min-width: 0;
+  display: flex; flex-direction: column; gap: 2px; text-align: left; overflow: hidden;
+}
+.day-cell:hover { border-color: var(--accent); }
+.day-cell:disabled { opacity: 0.55; }
+.day-cell:disabled:hover { border-color: var(--border); }
+.day-cell .num { font-size: 13px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.day-cell .wx { font-size: 12px; color: var(--text-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.day-cell .temp { font-size: 12px; color: var(--text-2); font-variant-numeric: tabular-nums; }
+.day-cell.out { visibility: hidden; }
+.strip { display: flex; gap: 1px; height: 14px; margin-top: auto; flex-shrink: 0; }
+.strip span { flex: 1; border-radius: 2px; background: var(--missing); }
+
+/* 연간: 화면 비율에 따라 4×3 / 3×4 / 6×2 / 2×6 / 12×1 중 칸이 가장 큰 배치 (app.js). 너무 좁으면 .scroll */
+.year { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px 20px; }
+.mini { display: flex; flex-direction: column; min-height: 0; }
+.mini h3 { font-size: 13px; margin: 0 0 4px; color: var(--text-2); font-weight: 600; }
+.mini .dows, .mini .days { display: grid; grid-template-columns: repeat(7, minmax(0, 1fr)); gap: 2px; }
+.mini .dows span { font-size: 10px; color: var(--muted); text-align: center; }
+.mini .days button, .mini .days span {
+  border: 0; border-radius: 3px; padding: 0; background: var(--missing); min-width: 0; min-height: 0; aspect-ratio: 1;
+}
+.mini .days span.out { background: none; }
+.mini .days button.today { outline: 2px solid var(--accent); outline-offset: 1px; }
+
+/* 범례 */
+.legend { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 10px; color: var(--text-2); font-size: 12px; }
+.legend .ramp { display: inline-flex; align-items: center; gap: 6px; }
+.legend .bar { width: 160px; height: 10px; border-radius: 3px; }
+.legend .swatch { display: inline-block; width: 12px; height: 10px; border-radius: 2px; background: var(--missing); vertical-align: middle; margin-right: 4px; }
+
+/* ---- 그래프 모드 ---- */
+.graph-layout { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; align-items: stretch; }
+.panels { display: grid; gap: 8px; min-width: 0; }
+.panel {
+  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 8px;
+  display: flex; flex-direction: column; min-width: 0; min-height: 0;
+}
+.panel-head { display: flex; flex-wrap: wrap; gap: 4px; margin-bottom: 4px; }
+.panel-head select { background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 2px 4px; font-size: 12px; max-width: 60%; min-width: 0; }
+.panel .chart-box { position: relative; flex: 1; min-height: 140px; touch-action: pan-y; }
+.panel .chart-box canvas { cursor: grab; }
+.panel .chart-box canvas:active { cursor: grabbing; }
+.panel .table-wrap { flex: 1; min-height: 0; }
+.lead-buttons { display: flex; flex-direction: column; gap: 3px; }
+.lead-buttons button {
+  display: flex; align-items: center; gap: 8px; border: 1px solid var(--border); background: var(--surface);
+  border-radius: 6px; padding: 4px 8px; color: var(--muted); text-align: left; font-size: 13px; white-space: nowrap;
+}
+.lead-buttons button .key { width: 22px; height: 0; border-top: 3px solid; opacity: 0.35; }
+.lead-buttons button .key.dashed { border-top-style: dashed; }
+.lead-buttons button[aria-pressed="true"] { color: var(--text); }
+.lead-buttons button[aria-pressed="true"] .key { opacity: 1; }
+.lead-buttons .all { justify-content: center; color: var(--text-2); }
+
+/* ---- 일간 모달 ---- */
+dialog {
+  width: min(880px, calc(100vw - 32px)); max-height: calc(100vh - 32px); border: 1px solid var(--border);
+  border-radius: 12px; padding: 16px; background: var(--surface); color: var(--text);
+}
+dialog::backdrop { background: rgba(0, 0, 0, 0.35); }
+.modal-head { display: flex; justify-content: space-between; align-items: start; gap: 12px; margin-bottom: 12px; }
+.modal-head .sub { margin: 2px 0 0; color: var(--text-2); }
+.close { border: 0; background: none; font-size: 18px; padding: 2px 6px; color: var(--text-2); }
+.tabs { display: flex; flex-wrap: wrap; gap: 4px; }
+.tabs button { border: 1px solid var(--border); background: none; border-radius: 999px; padding: 3px 10px; color: var(--text-2); }
+.tabs button[aria-pressed="true"] { background: var(--accent-wash); color: var(--text); border-color: var(--accent); font-weight: 600; }
+.chart-box { position: relative; }
+.modal-chart { height: 320px; }
+.day-table .diff { color: var(--text-2); font-size: 12px; }
+.day-table .mismatch { color: var(--muted); font-size: 12px; }
+.day-table td.name, .day-table th.row-head { text-align: left; }
+
+/* 공용 툴팁 (값이 먼저, 이름은 뒤) */
+.tooltip {
+  position: fixed; z-index: 20; pointer-events: none; background: var(--surface); color: var(--text);
+  border: 1px solid var(--border); border-radius: 6px; padding: 6px 8px; font-size: 12px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12); font-variant-numeric: tabular-nums;
+}
+.tooltip strong { font-size: 13px; }
+.tooltip .label { color: var(--text-2); }
+
+/* ---- 넓은 화면: 달력·그래프가 화면 높이를 꽉 채움 ---- */
+@media (min-width: 761px) {
+  body { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+  main { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .calendar-layout:not([hidden]) { flex: 1; min-height: 0; align-items: stretch; }
+  .city-list { overflow: auto; }
+  .content { min-height: 0; }
+  .calendar { flex: 1; min-height: 0; overflow: auto; display: flex; flex-direction: column; }
+  .calendar > * { flex: 1; min-height: 0; }
+  .calendar table.grid { height: 100%; }
+  .day-cell { min-height: 0; }
+  .strip { height: max(14px, 24%); }
+  .year { grid-template-rows: repeat(3, minmax(0, 1fr)); }
+  .mini .days { flex: 1; grid-template-rows: repeat(6, minmax(0, 1fr)); }
+  .mini .days button, .mini .days span { aspect-ratio: auto; }
+  /* 어떤 배치로도 칸이 너무 작으면: 칸 크기를 고정하고 가로·세로 스크롤 */
+  .calendar > .year.scroll { flex: none; width: max-content; min-height: auto; }
+  .year.scroll .mini .days { flex: none; grid-template-rows: none; }
+  .year.scroll .mini .days button, .year.scroll .mini .days span { aspect-ratio: 1; }
+  .graph-mode:not([hidden]) { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+  .graph-layout { flex: 1; min-height: 0; }
+  .panels { min-height: 0; }
+  .panel .chart-box { min-height: 0; } /* 16분할도 화면 안에 들어가게 (높이를 나눠 가짐) */
+  .lead-buttons { overflow: auto; }
+}
+
+/* ---- 좁은 화면: 위아래로 스크롤 ---- */
+@media (max-width: 760px) {
+  main { padding: 12px 8px; }
+  .calendar { padding: 6px; }
+  .calendar-layout { grid-template-columns: 1fr; }
+  .city-list { display: none; }
+  .narrow-only { display: inline-block; }
+  .metric-pick { margin-left: 0; }
+  .year { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .day-cell { min-height: 56px; padding: 4px; }
+  .day-cell .wx, .day-cell .temp { display: none; }
+  .strip { height: 10px; gap: 0; }
+  table.grid { border-spacing: 1px; font-size: 12px; }
+  table.grid td { padding: 5px 2px; }
+  table.grid th { padding: 2px; }
+  table.grid th.row-head button { padding: 2px; font-size: 12px; }
+  .toolbar label { max-width: 100%; }
+  .toolbar label .seg { overflow-x: auto; } /* 단위 버튼이 많으면 가로로 밀어서 */
+  .graph-layout { grid-template-columns: 1fr; }
+  .panels { grid-template-columns: 1fr !important; grid-template-rows: none !important; }
+  .panel .chart-box { height: 280px; flex: none; }
+  .lead-buttons { flex-direction: row; flex-wrap: wrap; }
+}
