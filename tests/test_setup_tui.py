@@ -195,11 +195,12 @@ class DockerModeTest(SetupCase):
 
     def test_crontab_대신_컨테이너_안내(self):
         keys = ["\n", "\n", "\n", *typed("Osaka"), "\n", "\n", "\t", "\t", "\n", "\n", "\n"]
-        with mock.patch.object(setup_tui, "IN_DOCKER", True):
+        with mock.patch.object(setup_tui, "IN_DOCKER", True), mock.patch.object(setup_tui, "WEB_PORT", "8080"):
             result, scr = self.run_setup(keys)
         self.assertEqual(self.cities(), [("Osaka", "Japan")])
         subprocess.run.assert_not_called()
         self.assertIn("docker compose up -d", result["cron"])
+        self.assertTrue(any("http://<이 PC 주소>:8080" in t for t in scr.history))  # 완료 화면에 웹 주소
         self.assertIn(TEXT["ko"]["finish_docker"], scr.history)
         self.assertNotIn(setup_tui.CRON_LINE, scr.history)
 

@@ -16,7 +16,7 @@ TEXT = {
             "n일 전 예보가 당일 예보와 얼마나 같았는지 기록합니다.\n"
             "\n"
             "결과는 일별로 그날의 기록을 그대로 보거나, 주별·월별·연도별로 같은 n일 전 예보끼리 평균 내어 볼 수 있습니다. "
-            "(조회 화면은 웹으로 추가 예정)\n"
+            "(조회는 웹 화면에서 합니다)\n"
             "\n"
             "데이터는 이 컴퓨터의 data/weather.sqlite3 에 저장됩니다. 컴퓨터를 계속 켜 두어야 합니다."
         ),
@@ -72,6 +72,7 @@ TEXT = {
         "done_cron": "crontab에 등록했습니다.",
         "done_cron_failed": "crontab 등록 실패: {e}",
         "done_docker": "수집 컨테이너가 꺼져 있으면 {up} 으로 시작하세요.",
+        "done_web": "웹 조회: http://<이 PC 주소>:{port}",
         "done_next": "각 도시의 현지 22시에 첫 수집이 시작됩니다. 결과는 logs/ 폴더에 남습니다.",
         "done_keys": "Enter 종료",
         "too_small": "터미널 창을 {w}x{h} 이상으로 넓혀 주세요",
@@ -90,7 +91,7 @@ TEXT = {
             "and records how close each n-day-ahead forecast was to the same-day forecast.\n"
             "\n"
             "Results can be viewed per day as recorded, or as weekly, monthly and yearly averages of the same n-day-ahead forecasts. "
-            "(The viewer will be added as a web page)\n"
+            "(Results are viewed in the web page)\n"
             "\n"
             "Data is stored in data/weather.sqlite3 on this computer. The computer must stay on."
         ),
@@ -146,6 +147,7 @@ TEXT = {
         "done_cron": "Registered in crontab.",
         "done_cron_failed": "crontab registration failed: {e}",
         "done_docker": "If the collector container is not running, start it with {up}.",
+        "done_web": "Web viewer: http://<this PC's address>:{port}",
         "done_next": "The first fetch for each city starts at 22:00 local time. Results are written to logs/.",
         "done_keys": "Enter exit",
         "too_small": "Please enlarge the terminal to at least {w}x{h}",
@@ -163,7 +165,7 @@ TEXT = {
             "n日前の予報が当日の予報とどれだけ一致したかを記録します。\n"
             "\n"
             "結果は日別にその日の記録をそのまま見るか、週別・月別・年別に同じn日前の予報どうしの平均で見ることができます。"
-            "（閲覧画面はWebで追加予定）\n"
+            "（閲覧はWeb画面で行います）\n"
             "\n"
             "データはこのコンピュータの data/weather.sqlite3 に保存されます。コンピュータは常に起動しておく必要があります。"
         ),
@@ -219,6 +221,7 @@ TEXT = {
         "done_cron": "crontab に登録しました。",
         "done_cron_failed": "crontab の登録に失敗しました: {e}",
         "done_docker": "収集コンテナが停止している場合は {up} で起動してください。",
+        "done_web": "Web 閲覧: http://<このPCのアドレス>:{port}",
         "done_next": "各都市の現地時間22時に最初の取得が始まります。結果は logs/ フォルダに記録されます。",
         "done_keys": "Enter 終了",
         "too_small": "ターミナルを {w}x{h} 以上に広げてください",

@@ -21,6 +21,7 @@ STEPS = 5
 CRON_LINE = f"*/30 * * * *  {config.ROOT / 'run.sh'}"  # run.sh install이 등록하는 줄과 같음
 IN_DOCKER = os.environ.get("ACCU_WEATHER_DOCKER") == "1"  # Dockerfile이 설정. crontab 대신 serve 컨테이너가 수집
 DOCKER_UP = "docker compose up -d"
+WEB_PORT = os.environ.get("WEB_PORT")  # compose가 넘겨줌. 웹 조회 주소 안내용
 
 ENTER = ("\n", "\r", curses.KEY_ENTER)
 ESC = "\x1b"
@@ -419,6 +420,8 @@ class Setup:
         if result["stopped"] or result["purged"]:
             lines.append(self.t("done_removed", stopped=result["stopped"], purged=result["purged"]))
         lines += [result["cron"], "", self.t("done_next")]
+        if IN_DOCKER and WEB_PORT:
+            lines += ["", self.t("done_web", port=WEB_PORT)]
         while True:
             area = self.frame(None, self.t("done_title"), self.t("done_keys"))
             if area:

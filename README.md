@@ -2,7 +2,7 @@
 
 등록한 도시들의 15일 예보를 매일 **도시 현지 시각 22시**에 [Open-Meteo](https://open-meteo.com/)에서 받아 SQLite에 저장하고,
 날짜마다 "n일 전(1~14) 예보가 당일 22시 예보(d0)와 얼마나 같았나"를 쌓는다.
-결과는 일별로 그대로 보거나, 주별·월별·연도별로 같은 n일전끼리 평균 내어 본다 (조회 화면은 웹으로 추가 예정).
+결과는 웹 화면에서 일별로 그대로 보거나, 주별·월별·연도별로 같은 n일전끼리 비교해 본다.
 설계와 진행 상황은 [PLAN.md](PLAN.md) 참고.
 
 ## 요구 사항
@@ -43,9 +43,11 @@ printf 'UID=%s\nGID=%s\n' "$(id -u)" "$(id -g)" > .env
 
 ```bash
 docker compose run --rm collector setup      # 설치 TUI: 언어 → 소개 → 자동 실행 안내 → 도시 추가 → 설치
-docker compose up -d --build                 # 수집 컨테이너 시작 (재부팅 후 자동 재시작)
+docker compose up -d --build                 # 수집 + 웹 시작 (재부팅 후 자동 재시작)
 docker compose logs -f collector             # "serve: collect every 30 min" 이 보이면 정상
 ```
+
+웹 조회: `http://<이 PC 주소>:8080` (다른 포트를 쓰려면 `.env`에 `WEB_PORT=8090` 등). 읽기 전용이고 로그인은 없다.
 
 컨테이너가 시작 직후와 매 :00/:30마다 현지 22시가 지났고 오늘 아직 받지 않은 도시만 받는다 (crontab 불필요).
 데이터는 호스트의 `data/`에 그대로 쌓인다. 그 밖의 명령은 `docker compose run --rm collector <명령>` (아래 "명령"의 `python3 -m accu_weather` 대신).
@@ -96,12 +98,26 @@ python3 -m accu_weather recompute [--city <id>]                     # 정확도 
 ## 테스트
 
 ```bash
-python3 -m unittest        # 네트워크 없이 1초 안에 끝남
+python3 -m unittest        # 네트워크 없이 1초 안에 끝남 (Flask가 없으면 웹 엔드포인트 테스트는 건너뜀)
 ```
 
-## 데이터 보기
+## 웹 조회
 
-조회 화면은 아직 없다 (웹 조회 예정). 지금은 `sqlite3`나 DB 뷰어로 직접 본다.
+| 모드 | 보기 |
+|---|---|
+| 달력 · 주 | 7일 × (당일 + 하루 전 ~ 14일 전), 고른 항목의 값과 색 |
+| 달력 · 월 | 보통 달력. 칸마다 당일 날씨·기온과 14칸 띠 (하루 전 → 14일 전), 초록(변동 적음) → 빨강(많음) |
+| 달력 · 연 | 화면 비율에 맞춰 4×3 / 3×4 / 6×2 …, 너무 작으면 스크롤. 날짜마다 변동 중앙값을 그 해 다른 날짜와 비교한 색 |
+| 일간 (날짜 클릭) | 14일 전 → 당일 예보가 당일과 얼마나 달랐나, 그래프 / 표 |
+| 그래프 | 1·2·4·8·16 분할 (분할마다 도시·항목, 커서는 모든 분할에 같이 표시), n일 전별 예보 선, 최고·최저기온 함께 보기. 점 단위 3시간 ~ 1달 선택 (최고는 최대·최저는 최소, 여러 날이면 평균 최고·최저). 휠 확대·축소, Shift+휠·끌기로 이동, 최대 2년 |
+
+수집이 실패하면 상단에 ⚠ 알림이 뜬다. "확인"은 그 브라우저에만 저장된다 (DB 기록은 그대로).
+언어는 상단에서 한국어 / English / 日本語. 언어 추가는 `web/static/i18n/`에 파일 하나 + `weather_code.json`에 이름 (PLAN.md 7.5).
+Docker 없이 띄울 때: `pip install -r web/requirements.txt` 후 `flask --app web.app run`.
+
+## 데이터 직접 보기
+
+SQL로 볼 때는 `sqlite3`나 DB 뷰어를 쓴다.
 
 ```bash
 sqlite3 -readonly -box data/weather.sqlite3 \

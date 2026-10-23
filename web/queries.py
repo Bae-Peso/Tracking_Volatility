@@ -1,0 +1,284 @@
+"""웹 조회용 데이터: SQLite를 읽기 전용으로 열어 화면에 쓸 값으로 바꾼다 (Flask 없이 테스트 가능).
+
+- 달력(주·월·연)과 일간 모달: 날짜마다 n일전(1~14) 하루 통합 예보를 d0(당일 22시 예보)와 비교한 값.
+  비교는 accu_weather.accuracy와 같은 함수·기준값을 쓴다 (accuracy 테이블과 같은 결과).
+- 그래프: 기간 안의 3시간 슬롯 값('slot') 또는 하루 통합 값('day')을 n일전(0~14)별로.
+  하루 통합 값은 일간 보기와 같은 행(slot='day': 최고기온 최대, 최저기온 최소, 강수량 합계 …).
+  6시간·1주 같은 더 큰 단위는 화면(app.js)이 이 둘을 묶어서 만든다.
+
+화면 문구는 보내지 않는다 (날씨는 코드, 오류는 오류 코드). 번역은 화면의 i18n 파일이 한다.
+"""
+
+import math
+import sqlite3
+from collections import defaultdict
+from datetime import date, datetime
+from zoneinfo import ZoneInfo
+
+from accu_weather import accuracy, codes
+
+SOURCE = "open-meteo"
+LEADS = list(range(1, 15))  # 비교 대상 n일전
+SERIES_MAX_DAYS = 760  # 그래프는 최대 2년 + 앞으로 14일
+
+# key: (단위, 소수 자리). 이름은 화면의 i18n 파일에 (cal.*, day.*, series.*)
+# 달력 색·주간 표 (점수의 단위 "점/pts/点"도 i18n)
+CALENDAR_METRICS = {
+    "score": ("", 1),
+    "weather": ("", 2),
+    "temp_max": ("℃", 1),
+    "temp_min": ("℃", 1),
+    "precip_prob": ("%p", 0),
+    "precip": ("mm", 1),
+}
+# 일간 모달 그래프·표 (d0와의 차이)
+DAY_METRICS = {
+    "temp_max": ("℃", 1),
+    "temp_min": ("℃", 1),
+    "precip_prob": ("%", 0),
+    "precip": ("mm", 1),
+    "wind": ("km/h", 1),
+    "visibility": ("km", 1),
+    "weather": ("", 2),
+}
+# 그래프 모드 (예보 값 그대로). weather는 날씨 가중치 0 맑음 ~ 5 강한 뇌우
+SERIES_METRICS = {
+    "temp_max": ("℃", 1),
+    "temp_min": ("℃", 1),
+    "precip_prob": ("%", 0),
+    "precip": ("mm", 1),
+    "wind": ("km/h", 1),
+    "visibility": ("km", 1),
+    "weather": ("", 2),
+}
+
+
+class RangeTooLong(ValueError):
+    def __init__(self, max_days):
+        super().__init__(max_days)
+        self.max_days = max_days
+
+
+def meta(acc_cfg):
+    def table(metrics):
+        return [{"key": k, "unit": v[0], "digits": v[1]} for k, v in metrics.items()]
+
+    return {
+        "leads": LEADS,
+        "series_max_days": SERIES_MAX_DAYS,
+        "calendar_metrics": table(CALENDAR_METRICS),
+        "day_metrics": table(DAY_METRICS),
+        "series_metrics": table(SERIES_METRICS),
+        # 날씨 이름은 weather_code.json의 언어별 이름 그대로 (언어를 추가하면 여기 이름도 추가)
+        "weather_names": {code: {k: v for k, v in entry.items() if k != "category"}
+                          for code, entry in codes.WEATHER_CODES.items()},
+        # 색 범례: 이 값이면 빨강 (badness 1)
+        "worst": {
+            "score": 50, "weather": 1, "temp_max": acc_cfg["temp_worst_c"], "temp_min": acc_cfg["temp_worst_c"],
+            "precip_prob": 100, "precip": acc_cfg["rain_worst_mm"],
+        },
+    }
+
+
+def connect_ro(path):
+    """읽기 전용. 수집 컨테이너가 쓰는 순간에는 잠깐 기다린다."""
+    conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=5)
+    conn.row_factory = sqlite3.Row
+    return conn
+
+
+def cities(conn):
+    rows = conn.execute("SELECT city_id, name, country, timezone, active FROM city ORDER BY active DESC, name")
+    return [dict(r) for r in rows]
+
+
+def city(conn, city_id):
+    row = conn.execute("SELECT city_id, name, country, timezone, active FROM city WHERE city_id = ?",
+                       (city_id,)).fetchone()
+    return dict(row) if row else None
+
+
+def errors(conn, limit=50):
+    """아직 확인 안 된(read_at 없는) 수집 실패, 최근 것부터. 웹은 읽기 전용이라 확인 표시는 브라우저에 저장한다."""
+    rows = conn.execute(
+        "SELECT error_id, occurred_at, message FROM error_log WHERE read_at IS NULL ORDER BY error_id DESC LIMIT ?",
+        (limit,),
+    )
+    return [dict(r) for r in rows]
+
+
+def local_today(tz):
+    return datetime.now(ZoneInfo(tz)).date().isoformat()
+
+
+# ---- d0 비교 ----
+
+def _diff(a, b, scale=1):
+    return None if a is None or b is None else round((a - b) / scale, 3)
+
+
+def compare(d0, f, acc_cfg):
+    """n일전 하루 예보 f를 d0와 비교. 차이는 n일전 − d0 (+면 높게 예보)."""
+    (row,) = accuracy.accuracy_rows([d0, f], acc_cfg, "")
+
+    def r3(v):
+        return None if v is None else round(v, 3)
+
+    return {
+        "score": row["score"],
+        "weather": r3(row["weather_severity"]),
+        "weather_match": row["weather_match"],
+        "temp_max": r3(row["temp_max_diff"]),
+        "temp_min": r3(row["temp_min_diff"]),
+        "precip_prob": row["precip_prob_diff"],
+        "precip": _diff(f["precip_mm"], d0["precip_mm"]),
+        "precip_log": r3(row["precip_log_diff"]),
+        "wind": _diff(f["wind_kmh"], d0["wind_kmh"]),
+        "visibility": _diff(f["visibility_m"], d0["visibility_m"], 1000),
+    }
+
+
+def badness(metric, c, acc_cfg):
+    """0(d0와 같음) ~ 1(기준값 이상 차이). 점수는 100점 → 0, 50점 이하 → 1."""
+    if metric == "score":
+        v = None if c["score"] is None else (100 - c["score"]) / 50
+    elif metric == "weather":
+        v = c["weather"]
+    elif metric in ("temp_max", "temp_min"):
+        v = None if c[metric] is None else abs(c[metric]) / acc_cfg["temp_worst_c"]
+    elif metric == "precip_prob":
+        v = None if c["precip_prob"] is None else abs(c["precip_prob"]) / 100
+    elif metric == "precip":
+        v = None if c["precip_log"] is None else abs(c["precip_log"]) / math.log1p(acc_cfg["rain_worst_mm"])
+    else:
+        raise ValueError(metric)
+    return None if v is None else round(max(0.0, min(1.0, v)), 3)
+
+
+def _day_forecasts(conn, city_id, start, end):
+    """{target_date: {lead_days: 하루 통합 행}}"""
+    by_date = defaultdict(dict)
+    rows = conn.execute(
+        "SELECT * FROM weather WHERE city_id = ? AND slot = 'day' AND source = ? AND target_date BETWEEN ? AND ?",
+        (city_id, SOURCE, start, end),
+    )
+    for r in rows:
+        by_date[r["target_date"]][r["lead_days"]] = r
+    return by_date
+
+
+def _d0_value(metric, d0):
+    """주간 표 '당일' 열에 보여줄 실제 예보 값. 점수·날씨 변동성은 기준 자신이라 없음."""
+    return {"temp_max": d0["temp_max"], "temp_min": d0["temp_min"], "precip_prob": d0["precip_prob"],
+            "precip": d0["precip_mm"]}.get(metric)
+
+
+def calendar(conn, city_id, start, end, metric, acc_cfg):
+    """달력용: d0가 있는 날짜마다 1~14일전의 값(차이 또는 점수)과 색 정도(0~1), 그리고 당일 예보 요약.
+    없는 n일전은 None."""
+    if metric not in CALENDAR_METRICS:
+        raise ValueError(metric)
+    days = {}
+    for target, by_lead in _day_forecasts(conn, city_id, start, end).items():
+        d0 = by_lead.get(0)
+        if d0 is None:
+            continue
+        values, bad = [], []
+        for lead in LEADS:
+            f = by_lead.get(lead)
+            if f is None:
+                values.append(None)
+                bad.append(None)
+                continue
+            c = compare(d0, f, acc_cfg)
+            values.append(c[metric])
+            bad.append(badness(metric, c, acc_cfg))
+        days[target] = {
+            "values": values,
+            "bad": bad,
+            "d0": {"weather_code": d0["weather_code"], "temp_max": d0["temp_max"],
+                   "temp_min": d0["temp_min"], "value": _d0_value(metric, d0)},
+        }
+    return days
+
+
+def day(conn, city_id, target, acc_cfg):
+    """일간 모달: 14일전 → 당일 순으로 예보 값, d0와의 차이, 점수. d0가 없으면 차이는 None."""
+    by_lead = _day_forecasts(conn, city_id, target, target).get(target, {})
+    d0 = by_lead.get(0)
+    leads = []
+    for lead in range(14, -1, -1):
+        f = by_lead.get(lead)
+        if f is None:
+            leads.append({"lead": lead, "available": False})
+            continue
+        if d0 is None:
+            c = None
+        elif lead == 0:  # 기준 자신: 차이 0
+            c = {**{k: 0 for k in DAY_METRICS}, "weather_match": 1, "score": None}
+        else:
+            c = compare(d0, f, acc_cfg)
+        leads.append({
+            "lead": lead,
+            "available": True,
+            "weather_code": f["weather_code"],
+            "values": {
+                "temp_max": f["temp_max"], "temp_min": f["temp_min"], "precip_prob": f["precip_prob"],
+                "precip": f["precip_mm"], "wind": f["wind_kmh"],
+                "visibility": None if f["visibility_m"] is None else round(f["visibility_m"] / 1000, 2),
+                "weather": round(codes.weight(f["weather_code"]), 2) if f["weather_code"] is not None else None,
+            },
+            "diffs": None if c is None else {k: c[k] for k in DAY_METRICS},
+            "weather_match": None if c is None else c["weather_match"],
+            "score": None if c is None else c["score"],
+        })
+    return {
+        "date": target,
+        "has_d0": d0 is not None,
+        "d0_weather_code": d0["weather_code"] if d0 is not None else None,
+        "leads": leads,
+    }
+
+
+# ---- 그래프 ----
+
+def _slot_value(metric, r):
+    if metric == "precip":
+        return r["precip_mm"]
+    if metric == "wind":
+        return r["wind_kmh"]
+    if metric == "visibility":
+        return None if r["visibility_m"] is None else r["visibility_m"] / 1000
+    if metric == "weather":
+        return None if r["weather_code"] is None else codes.weight(r["weather_code"])
+    return r[metric]
+
+
+def series(conn, city_id, start, end, metric, step):
+    """{daily, leads: {n: [[x, 값], …]}}. x는 슬롯이면 'YYYY-MM-DDTHH:00', 하루 단위면 'YYYY-MM-DD'.
+    step: 'slot'(3시간 슬롯) / 'day'(하루 통합 행: 최고기온 최대, 최저기온 최소, 강수량 합계,
+    강수확률·바람 최대, 가시거리 최소, 날씨는 가장 나쁜 날씨 — 일간 보기와 같은 값)."""
+    if metric not in SERIES_METRICS or step not in ("slot", "day"):
+        raise ValueError(metric if metric not in SERIES_METRICS else step)
+    daily = step == "day"
+    rows = conn.execute(
+        "SELECT * FROM weather WHERE city_id = ? AND slot " + ("= 'day'" if daily else "!= 'day'")
+        + " AND source = ? AND target_date BETWEEN ? AND ? AND lead_days BETWEEN 0 AND 14 ORDER BY target_date, slot",
+        (city_id, SOURCE, start, end),
+    )
+    leads = defaultdict(list)
+    for r in rows:
+        v = _slot_value(metric, r)
+        x = r["target_date"] if daily else f"{r['target_date']}T{r['slot']}:00"
+        leads[r["lead_days"]].append([x, None if v is None else round(v, 3)])
+    return {"daily": daily, "leads": {str(k): v for k, v in sorted(leads.items())}}
+
+
+def clamp_range(start, end, max_days=400):
+    """날짜 문자열 검사. 순서가 바뀌었으면 바꾸고, 너무 길면 RangeTooLong."""
+    s, e = date.fromisoformat(start), date.fromisoformat(end)
+    if e < s:
+        s, e = e, s
+    if (e - s).days + 1 > max_days:
+        raise RangeTooLong(max_days)
+    return s.isoformat(), e.isoformat()
