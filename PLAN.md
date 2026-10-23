@@ -4,8 +4,9 @@
 - v2: 데이터 소스·DB 구조·정확도 기준 변경
 - v3: 도시별 현지 22시 수집(cron 30분 간격), city_id UUID
 - v4: 정확도를 "날짜 × n일전" 한 줄씩(d0와 비교)으로 바꾸고 월별·연도별로 n일전끼리 평균, error_log 추가
+- v5: 설치 TUI(`setup`, 도시 추가·등록 취소), 백업 방향(rsync / 클라우드), 조회 단위(일별 / 주·월·연 평균)
 
-버전 : 0.2 (1~4단계 + recompute 구현)
+버전 : 0.3 (1~4단계 + recompute + 설치 TUI)
 
 ---
 
@@ -84,7 +85,7 @@ cron 30분마다 → run.sh → python3 -m accu_weather collect
 - 도시마다 하루 한 번(현지 22시)만 받으므로 **"n일 전 현지 22시에 본 예보"** 가 그 칸의 값이다.
 - 매시간 수집하지 않는 이유: 결국 22시 값 하나만 쓰고, Open-Meteo 예보도 몇 시간 간격으로만 갱신되므로 나머지 호출은 의미가 없다.
 - 실패 대비: 현지 22:30, 23:00, 23:30 실행이 재시도 역할. 넷 다 실패한 날은 과거 예보 API로 나중에 보충 가능(강수확률·가시거리 제외).
-- 날짜·슬롯은 도시 현지 기준으로 저장한다. 사용자 시간대 변환은 웹 조회 화면에서만 한다 (7.4).
+- 날짜·슬롯은 도시 현지 기준으로 저장한다. 사용자 시간대 변환은 웹 조회 화면에서만 한다 (7.5).
 - 당일(d0) 22시 예보는 이미 지나간 시간대에 대해서는 사실상 실측에 가깝다. 그래서 필요하면 "최종값" 기준으로 쓸 수 있다.
 - 22시 전에 수동으로 실행한 값은 그날 22시 실행이 덮어쓴다.
 
@@ -263,13 +264,28 @@ def score(row):   # accu_weather/accuracy.py
 가중치(0.25 × 4), 기준값(5℃, 10mm)은 `config.toml`의 `[accuracy]`, 날씨 좌표는 `weather_severity.json`에서 바꾼다.
 바꾼 뒤 `python3 -m accu_weather recompute`로 전체 재계산.
 
-### 5.2 월별·연도별 분석 (핵심)
+### 5.2 일별·주별·월별·연도별 분석 (핵심)
+
+| 단위 | 보는 방법 |
+|---|---|
+| 일별 | **조회**. 그 날짜의 accuracy 행(1~14일전)을 그대로 본다 (평균 없음) |
+| 주별 | **평균**. 같은 주(ISO 주, 월요일 시작: `strftime('%G-W%V', target_date)`)의 같은 n일전끼리 |
+| 월별 | **평균**. `strftime('%Y-%m', target_date)` |
+| 연도별 | **평균**. `strftime('%Y', target_date)` |
 
 같은 n일전끼리 묶어 평균 낸다. 예: 11월의 14일전 정확도 = 11/1~11/30 각 날짜에 대한 14일전 예보 30줄의 평균.
-→ **도시 × 월 × n일전(1~14)** 마다 값 하나. 한 달에 14개, "며칠 전 예보부터 믿을 만한가" 곡선이 된다.
+→ **도시 × 기간 × n일전(1~14)** 마다 값 하나. 한 기간에 14개, "며칠 전 예보부터 믿을 만한가" 곡선이 된다.
 
 ```sql
--- 도시·월·n일전별 정확도 (연도별은 strftime('%Y', target_date))
+-- 일별: 오사카 11/1 에 대한 14일전 ~ 1일전 예보가 d0와 얼마나 같았나
+SELECT lead_days, weather_match, temp_max_diff, precip_prob_diff, score
+FROM accuracy JOIN city USING (city_id)
+WHERE city.name = 'Osaka' AND target_date = '2026-11-01'
+ORDER BY lead_days DESC;
+```
+
+```sql
+-- 도시·월·n일전별 평균 (주별은 strftime('%G-W%V', …), 연도별은 strftime('%Y', …) 로 바꾸면 됨)
 SELECT city.name, strftime('%Y-%m', target_date) AS month, lead_days,
        COUNT(*)                               AS days,          -- 평균에 쓴 날짜 수 (빠진 날 확인용)
        ROUND(AVG(score), 1)                   AS avg_score,
@@ -300,11 +316,42 @@ GROUP BY a.lead_days ORDER BY a.lead_days DESC;
 ```
 
 - 슬롯별(00~21시) 변동성 → 하루 중 어느 시간대 예보가 잘 바뀌나 (필요하면 accuracy를 슬롯 단위로도 계산)
-- 출력은 웹 조회 화면에서 한다 (7.4). CLI 조회 명령은 두지 않는다. 그 전까지는 `sqlite3 -readonly` 나 DB 뷰어로 직접 본다.
+- 출력은 웹 조회 화면에서 한다 (7.5). CLI 조회 명령은 두지 않는다. 그 전까지는 `sqlite3 -readonly` 나 DB 뷰어로 직접 본다.
 
 ---
 
-## 6. 도시 관리 (사용자가 추가)
+## 6. 설치와 도시 관리
+
+### 6.1 설치 TUI
+
+```bash
+python3 -m accu_weather setup
+```
+
+표준 라이브러리 `curses`로 만든 설치 화면. 마지막 "설치"에서 Enter를 누르기 전에는 DB와 crontab을 건드리지 않는다.
+
+| 순서 | 화면 | 내용 |
+|---|---|---|
+| 1 | 언어 | 한국어 / English / 日本語 (설치 화면에만 적용, 기본값은 `$LANG`). 고르는 동안 바로 그 언어로 바뀜 |
+| 2 | 소개 | 프로그램 개요 |
+| 3 | 자동 실행 안내 | crontab에 30분 간격 줄이 들어간다는 것, 해제 방법 |
+| 4 | 도시 추가 | 영어 이름으로 검색 → "도시, 지역, 국가" 목록에서 Enter로 추가. 1개 이상이면 [다음] 표시. 등록된 도시 등록 취소 |
+| 5 | 설치 | 추가할 도시, 등록 취소할 도시, crontab 줄 확인 → Enter로 적용 + `./run.sh install` |
+| - | 완료 | 결과 표시 (웹 조회를 만들면 접속 주소·포트도 여기서 안내) |
+
+- 도시 화면 키
+  - Tab: 칸 이동 (검색 / 결과 / 선택 목록 / 다음)
+  - Enter: 검색창에서는 검색, 결과 목록에서는 추가
+  - Del: 선택 목록에서 새로 고른 도시는 빼기. 이미 등록된 도시는 등록 취소 방법을 묻는다
+    → **1 수집 중단**(데이터 유지, `city disable`과 같음) / **2 완전 삭제**(데이터까지, `--purge`와 같음) / 다른 키는 취소.
+    표시된 도시에서 다시 Del을 누르면 표시 해제. 실제 적용은 설치 화면에서 Enter를 누를 때.
+  - Esc: 검색어가 있거나 목록에 있으면 → 검색창을 비우고 검색창으로. 빈 검색창에서 한 번 더 → 이전 화면.
+- 이미 등록된 도시는 "(등록됨)" / "(수집 중단됨)"으로 함께 보인다. 같은 좌표는 두 번 고를 수 없다.
+- 소개 화면에 조회 단위를 안내한다: 일별은 그대로 조회, 주별·월별·연도별은 같은 n일전끼리 평균 (5.2, 웹에서 볼 예정).
+- 설치 화면 문구는 `accu_weather/setup_text.py` 에 언어별로 모아 둔다. 언어 추가는 같은 키로 한 벌 더 넣으면 된다.
+- 창이 60×18보다 작으면 넓혀 달라는 안내만 띄운다. `LANG`의 로케일이 설치 안 돼 있으면 C.UTF-8로 대신 연다.
+
+### 6.2 도시 관리 명령
 
 ```bash
 python3 -m accu_weather city add "Osaka"        # 영어 이름으로 검색, 후보를 번호로 보여주고 선택
@@ -317,7 +364,6 @@ python3 -m accu_weather city export / import    # cities.txt (탭 구분, city_i
 
 - 도시를 추가하면 그 도시의 다음 현지 22시 수집부터 반영된다. 과거 예보는 소급할 수 없어서 추가한 날부터 쌓인다.
 - 삭제는 기본적으로 `active=0` (기록 보존). 완전 삭제는 `--purge` 옵션 (확인 후 삭제).
-- 추후 TUI로 사용자가 직접 추가하기 편한 대화형 인터페이스가 있으면 좋을 것으로 예상됨.
 - 도시 목록은 `city export`로 `cities.txt`에 저장하고 `city import`로 불러온다. city_id가 같이 저장되므로 DB를 새로 만들어도 같은 도시로 이어진다.
 
 ---
@@ -335,7 +381,9 @@ accu_weather/
 ├─ weather_code.json      # WMO 코드 → 카테고리, 이름
 ├─ weather_severity.json  # WMO 코드 → (x, y) 좌표
 ├─ accu_weather/
-│   ├─ __main__.py        # collect / recompute / city
+│   ├─ __main__.py        # setup / collect / recompute / city
+│   ├─ setup_tui.py       # 설치 TUI (curses)
+│   ├─ setup_text.py      # 설치 TUI 문구 (ko / en / ja)
 │   ├─ config.py          # config.toml 읽기
 │   ├─ codes.py           # 카테고리, 가중치, 대표 날씨
 │   ├─ collect.py         # 현지 22시가 지난 도시 골라서 수집
@@ -350,7 +398,7 @@ accu_weather/
 └─ logs/
 ```
 
-의존성: Python 3.11+ 표준 라이브러리만 사용 (`urllib`, `sqlite3`, `json`, `zoneinfo`, `tomllib`(3.11+)). Rust는 불필요.
+의존성: Python 3.11+ 표준 라이브러리만 사용 (`urllib`, `sqlite3`, `json`, `zoneinfo`, `tomllib`(3.11+), `curses`). Rust는 불필요.
 
 ### 7.2 run.sh
 
@@ -361,7 +409,6 @@ accu_weather/
 
 ```
 */30 * * * *  /home/baepeso/Programming/accu_weather/run.sh
-30 4  * * 0  sqlite3 /home/baepeso/Programming/accu_weather/data/weather.sqlite3 ".backup '/백업경로/weather-$(date +\%F).sqlite3'"
 ```
 
 - 수집 줄은 `./run.sh install`로 등록, `./run.sh uninstall`로 제거한다 (run.sh 줄만 교체, 다른 crontab 줄은 유지).
@@ -371,13 +418,24 @@ accu_weather/
 - 매 실행 결과(저장 행 수, 실패)는 `logs/YYYY-MM.log`에 기록한다. 실패는 `error_log` 테이블에도 남긴다 (4.4).
 - 수집 실패 알림(메일·메신저)은 두지 않는다. 웹 조회를 만들면 `error_log`의 미확인 항목을 알림으로 보여준다.
 
-### 7.4 웹 조회 (예정)
+### 7.4 백업 (방향만 정함)
+
+- **시점**: 수집이 실제로 저장한 실행 뒤에 한다 (도시마다 현지 22시가 달라서 고정 시각 대신 "저장 직후").
+  run.sh에서 collect가 저장한 경우에만 이어서 백업을 돌린다.
+- **방법**: 먼저 `sqlite3 data/weather.sqlite3 ".backup ..."`으로 일관된 사본을 만들고 (쓰는 중인 파일을 그대로 복사하지 않음), 그 사본을
+  - 다른 드라이브·NAS 공유 폴더로 `rsync`, 또는
+  - 가능하면 클라우드 저장소로 업로드 (예: `rclone`).
+- 정할 것: 백업 위치, 보관 개수(예: 최근 n개만), 클라우드 사용 여부.
+
+### 7.5 웹 조회 (예정)
 
 - nginx로 HTTP 포트를 열고, 뒤에서 **Flask** 앱이 SQLite를 **읽기 전용**으로 조회해 보여준다. 수집(쓰기)은 지금처럼 cron만 한다.
 - "표준 라이브러리만" 원칙은 수집 쪽(`accu_weather/`)에만 적용한다. Flask는 웹 앱에만 쓴다.
 - 기존 코드는 그대로 두고 웹 앱을 옆에 추가한다. 기존 코드에 필요한 변경은 WAL 모드 한 줄 정도.
 - 공개 범위(집 안 / 외부, 인증), 웹에서 도시 관리 여부는 웹을 만들 때 정한다.
-- 화면 후보: 도시별 날짜 예보가 d14 → d0로 어떻게 바뀌었나, "n일 전 → n−1일 전 변경 확률"(5.2), 도시·월별 stability_score.
+- 화면 후보: 일별 조회(그 날짜의 d14 → d0 예보와 n일전별 정확도), 주별·월별·연도별 n일전별 평균(5.2), "n일 전 → n−1일 전 변경 확률".
+- `error_log`의 미확인 항목을 알림으로 보여주고, 확인하면 `read_at`을 채운다 (4.4).
+- 웹을 만들면 설치 TUI 완료 화면에 접속 주소·포트를 안내하고, 포트 설정 단계를 추가한다.
 - 날씨는 숫자 대신 `weather_code.json` 이름으로, 시간은 도시 현지 기준(필요하면 보는 사람 시간대로 변환)으로 보여준다.
 - 웹과 cron이 동시에 DB를 쓰므로 SQLite를 WAL 모드로 바꿔 읽기가 쓰기를 막지 않게 한다.
 
@@ -391,8 +449,8 @@ accu_weather/
 | 2 | ✅ run.sh + crontab 등록 (`./run.sh install`, 30분 간격, 도시별 현지 22시 판단) | **가능한 빨리 가동** (강수확률·가시거리는 과거 데이터로 소급 불가) |
 | 3 | ✅ 하루 통합 | 22시 실행 후 `slot='day'` 행 생성 |
 | 4 | 정확도 (n일전 vs d0) + error_log + 테스트 | ✅ 구현. 가동 다음 날부터 1일전 행이 생기고, 15일 뒤 1~14일전이 다 참 |
-| 5 | recompute ✅ + 백업 | 백업 경로 정하고 crontab 등록 |
-| 6 | 웹 조회 (nginx + Flask, 7.4, 보류) | 브라우저에서 "n일전 → n−1일전 변경 확률" 표 확인 |
+| 5 | recompute ✅ + 설치 TUI ✅ + 백업 (7.4) | 백업 위치 정하고 run.sh에 연결 |
+| 6 | 웹 조회 (nginx + Flask, 7.5, 보류) | 브라우저에서 "n일전 → n−1일전 변경 확률" 표 확인 |
 | 선택 | wttr.in 어댑터, 실제 관측값 비교 | 필요해지면 |
 
 ---
@@ -406,6 +464,8 @@ accu_weather/
 - weather_match: 카테고리 기준 (정도 차이는 weather_severity)
 - 수집 실패: 로그 파일 + error_log 테이블, 알림은 웹에서 (미확인만 표시)
 - 테스트: `python3 -m unittest`
+- 설치: `python3 -m accu_weather setup` (curses TUI, 언어 → 소개 → 자동 실행 안내 → 도시 추가 → 설치)
+- 백업: 저장 직후 `.backup` 사본 → rsync(다른 드라이브) 또는 클라우드, 세부는 미정
 - 웹: 추후 Flask (보류)
 
 남은 것 (기본값으로 진행해도 됨):

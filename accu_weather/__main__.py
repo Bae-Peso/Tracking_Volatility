@@ -1,6 +1,7 @@
 """CLI 진입점.
 
 사용법:
+    python3 -m accu_weather setup                   # 설치 TUI (언어 → 소개 → 자동 실행 안내 → 도시 추가 → 설치)
     python3 -m accu_weather collect                 # 현지 22시가 지난 도시만 받음 (cron 30분 간격)
     python3 -m accu_weather collect --force         # 시각과 상관없이 모든 활성 도시를 받음
     python3 -m accu_weather recompute [--city <id>] # 정확도 전체 재계산 (기준값·가중치를 바꾼 뒤)
@@ -30,6 +31,12 @@ def cmd_collect(conn, cfg, args):
     except Exception as e:  # 예상 못 한 오류도 웹 알림용으로 남긴다 (fetch 실패는 collect가 직접 남김)
         db.log_error(conn, f"collect error: {type(e).__name__}: {e}")
         raise
+
+
+def cmd_setup(conn, cfg, args):
+    from . import setup_tui  # curses는 setup에서만 불러옴
+
+    setup_tui.main(conn)
 
 
 def cmd_recompute(conn, cfg, args):
@@ -126,6 +133,9 @@ def cmd_city_import(conn, cfg, args):
 def build_parser():
     p = argparse.ArgumentParser(prog="accu_weather")
     sub = p.add_subparsers(dest="cmd", required=True)
+
+    c = sub.add_parser("setup", help="설치 TUI")
+    c.set_defaults(func=cmd_setup)
 
     c = sub.add_parser("collect", help="예보 수집")
     c.add_argument("--force", action="store_true", help="시각·중복 확인 없이 바로 받음")
