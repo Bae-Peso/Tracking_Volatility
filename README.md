@@ -14,11 +14,37 @@
 
 일반 리눅스 PC에 Docker Engine과 compose 플러그인이 있으면 된다.
 
+### 1. Docker 준비 (처음 한 번)
+
+- 설치: https://docs.docker.com/engine/install/
+- (선택) sudo 없이 `docker`를 쓰려면 계정을 `docker` 그룹에 넣고 다시 로그인한다.
+  `docker` 그룹은 사실상 root 권한이므로 원하지 않으면 아래 명령마다 `sudo`를 붙여도 된다.
+
+  ```bash
+  sudo usermod -aG docker $USER
+  ```
+
+  참고: https://docs.docker.com/engine/install/linux-postinstall/
+
+### 2. 데이터 폴더와 사용자 ID (처음 한 번)
+
+컨테이너는 호스트 사용자와 같은 UID/GID로 `data/`에 쓴다. 기본값은 **1000** (대부분 배포판에서 처음 만든 계정).
+
 ```bash
-printf 'UID=%s\nGID=%s\n' "$(id -u)" "$(id -g)" > .env   # 컨테이너가 data/ 에 쓸 수 있게 (처음 한 번)
+mkdir -p data      # 꼭 먼저 만든다. 없으면 Docker가 root 소유로 만들어 컨테이너가 쓰지 못한다
+id -u; id -g       # 둘 다 1000이면 끝. 아니면 아래 한 줄
+printf 'UID=%s\nGID=%s\n' "$(id -u)" "$(id -g)" > .env
+```
+
+- `.env`는 PC마다 다르므로 git에 올리지 않는다 (`.gitignore`에 있음).
+- 셸의 `$UID`는 Docker로 전달되지 않고, `sudo`를 붙이면 환경변수가 초기화되기 때문에 `.env` 파일로 넘긴다.
+
+### 3. 설치와 실행
+
+```bash
 docker compose run --rm collector setup      # 설치 TUI: 언어 → 소개 → 자동 실행 안내 → 도시 추가 → 설치
 docker compose up -d --build                 # 수집 컨테이너 시작 (재부팅 후 자동 재시작)
-docker compose logs -f collector             # 로그
+docker compose logs -f collector             # "serve: collect every 30 min" 이 보이면 정상
 ```
 
 컨테이너가 시작 직후와 매 :00/:30마다 현지 22시가 지났고 오늘 아직 받지 않은 도시만 받는다 (crontab 불필요).

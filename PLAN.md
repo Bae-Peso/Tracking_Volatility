@@ -457,7 +457,7 @@ accu_weather/
 | 스케줄 | 컨테이너 안에 cron 없음. `serve`가 시작 직후 한 번, 그 뒤 매 :00/:30에 collect. 받을 도시만 받는 판단은 그대로 |
 | 재시작 | `restart: unless-stopped` → 컴퓨터를 다시 켜도 자동 재개 |
 | 데이터 | `./data`를 그대로 연결 (기존 DB 그대로 사용, 옮길 필요 없음). config.toml·JSON은 읽기 전용으로 연결 → 고친 뒤 재시작 |
-| 권한 | `user: UID:GID` → data/ 파일 주인이 호스트 사용자 그대로. `.env`에 `UID=$(id -u)`, `GID=$(id -g)` (이 PC는 1003, 기본값 1000이면 data/에 못 씀) |
+| 권한 | `user: UID:GID`, 기본 1000 (대부분 배포판의 첫 계정). 다르면 `.env`에 `UID=$(id -u)`, `GID=$(id -g)` (이 PC는 1003). `data/`는 미리 `mkdir` (없으면 Docker가 root 소유로 만듦) |
 | 로그 | 표준 출력 → `docker compose logs collector` (10MB × 3개로 회전). 실패는 error_log에도 |
 | 종료 | `docker stop`의 SIGTERM을 받으면 바로 끝냄 (PID 1은 핸들러가 없으면 무시하므로 직접 처리) |
 | 설치 TUI | `docker compose run --rm collector setup`. 컨테이너 안에서는 crontab 대신 수집 컨테이너를 안내 (`ACCU_WEATHER_DOCKER=1`) |
@@ -472,8 +472,9 @@ docker compose run --rm collector city export data/cities.txt   # 컨테이너 �
 
 **호스트 cron → Docker 이전 순서**
 
-1. Docker Engine + compose 플러그인 설치 (https://docs.docker.com/engine/install/)
-2. `printf 'UID=%s\nGID=%s\n' "$(id -u)" "$(id -g)" > .env` — 컨테이너가 data/ 에 쓸 수 있게
+1. Docker Engine + compose 플러그인 설치 (https://docs.docker.com/engine/install/).
+   sudo 없이 쓰려면 `sudo usermod -aG docker $USER` 후 다시 로그인 (선택, docker 그룹은 사실상 root 권한)
+2. `mkdir -p data`, UID/GID가 1000이 아니면 `printf 'UID=%s\nGID=%s\n' "$(id -u)" "$(id -g)" > .env`
 3. `./run.sh uninstall` — 호스트 crontab의 수집 줄 제거 (둘이 같이 돌지 않게)
 4. `docker compose up -d --build`
 5. `docker compose logs collector`에 `serve: collect every 30 min`이 보이면 끝. 다음 현지 22시에 `saved …` 줄이 찍힌다.

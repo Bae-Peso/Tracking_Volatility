@@ -7,7 +7,7 @@ services:
     build: .
     image: accu-weather:latest
     restart: unless-stopped
-    # data/ 에 쓰는 사용자 = 호스트 사용자. 처음 한 번: printf 'UID=%s\nGID=%s\n' "$(id -u)" "$(id -g)" > .env
+    # data/ 에 쓰는 사용자 = 호스트 사용자. 기본 1000, 다르면 .env에 UID=, GID= (README "2. 데이터 폴더와 사용자 ID")
     user: "${UID:-1000}:${GID:-1000}"
     volumes:
       - ./data:/app/data                                        # DB (호스트의 data/ 그대로)
