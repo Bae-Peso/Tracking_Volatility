@@ -1,4 +1,4 @@
-"""3시간 슬롯 8개 → 하루 통합 행(slot='day')."""
+"""1시간 슬롯 24개 → 하루 통합 행(slot='day')."""
 
 from collections import defaultdict
 

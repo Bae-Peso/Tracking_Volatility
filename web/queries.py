@@ -2,9 +2,9 @@
 
 - 달력(주·월·연)과 일간 모달: 날짜마다 n일전(1~14) 하루 통합 예보를 d0(당일 22시 예보)와 비교한 값.
   비교는 accu_weather.accuracy와 같은 함수·기준값을 쓴다 (accuracy 테이블과 같은 결과).
-- 그래프: 기간 안의 3시간 슬롯 값('slot') 또는 하루 통합 값('day')을 n일전(0~14)별로.
-  하루 통합 값은 일간 보기와 같은 행(slot='day': 최고기온 최대, 최저기온 최소, 강수량 합계 …).
-  6시간·1주 같은 더 큰 단위는 화면(app.js)이 이 둘을 묶어서 만든다.
+- 그래프: 기간 안의 1시간 슬롯 값을 1·3·6·12시간으로 묶은 값('slot') 또는 하루 통합 값('day')을 n일전(0~14)별로.
+  시간 묶음과 하루 통합 값은 일간 보기와 같은 규칙(slot='day': 최고기온 최대, 최저기온 최소, 강수량 합계 …).
+  3일·1주 같은 여러 날 단위는 화면(app.js)이 하루 통합 값을 묶어서 만든다.
 
 화면 문구는 보내지 않는다 (날씨는 코드, 오류는 오류 코드). 번역은 화면의 i18n 파일이 한다.
 """
@@ -20,6 +20,7 @@ from accu_weather import accuracy, codes
 SOURCE = "open-meteo"
 LEADS = list(range(1, 15))  # 비교 대상 n일전
 SERIES_MAX_DAYS = 760  # 그래프는 최대 2년 + 앞으로 14일
+SERIES_HOURS = (1, 3, 6, 12)  # 그래프 시간 단위 (step='slot'일 때 몇 시간씩 묶을지)
 
 # key: (단위, 소수 자리). 이름은 화면의 i18n 파일에 (cal.*, day.*, series.*)
 # 달력 색·주간 표 (점수의 단위 "점/pts/点"도 i18n)
@@ -50,6 +51,10 @@ SERIES_METRICS = {
     "wind": ("km/h", 1),
     "visibility": ("km", 1),
     "weather": ("", 2),
+}
+# 슬롯을 몇 시간씩 묶을 때 규칙 (하루 통합과 같은 규칙. 날씨는 가중치가 가장 큰 = 가장 나쁜 날씨)
+WITHIN_DAY_RULE = {
+    "temp_max": max, "temp_min": min, "precip": sum, "precip_prob": max, "wind": max, "visibility": min, "weather": max,
 }
 
 
@@ -254,24 +259,29 @@ def _slot_value(metric, r):
     return r[metric]
 
 
-def series(conn, city_id, start, end, metric, step):
-    """{daily, leads: {n: [[x, 값], …]}}. x는 슬롯이면 'YYYY-MM-DDTHH:00', 하루 단위면 'YYYY-MM-DD'.
-    step: 'slot'(3시간 슬롯) / 'day'(하루 통합 행: 최고기온 최대, 최저기온 최소, 강수량 합계,
-    강수확률·바람 최대, 가시거리 최소, 날씨는 가장 나쁜 날씨 — 일간 보기와 같은 값)."""
-    if metric not in SERIES_METRICS or step not in ("slot", "day"):
-        raise ValueError(metric if metric not in SERIES_METRICS else step)
+def series(conn, city_id, start, end, metric, step, hours=1):
+    """{daily, leads: {n: [[x, 값], …]}}. x는 슬롯이면 묶음 시작 'YYYY-MM-DDTHH:00', 하루 단위면 'YYYY-MM-DD'.
+    step: 'slot'(1시간 슬롯을 hours시간씩 묶음) / 'day'(하루 통합 행). 묶는 규칙은 둘 다 WITHIN_DAY_RULE
+    (최고기온 최대, 최저기온 최소, 강수량 합계, 강수확률·바람 최대, 가시거리 최소 — 일간 보기와 같은 값)."""
+    if metric not in SERIES_METRICS or step not in ("slot", "day") or hours not in SERIES_HOURS:
+        raise ValueError(metric if metric not in SERIES_METRICS else step if step not in ("slot", "day") else hours)
     daily = step == "day"
     rows = conn.execute(
         "SELECT * FROM weather WHERE city_id = ? AND slot " + ("= 'day'" if daily else "!= 'day'")
         + " AND source = ? AND target_date BETWEEN ? AND ? AND lead_days BETWEEN 0 AND 14 ORDER BY target_date, slot",
         (city_id, SOURCE, start, end),
     )
-    leads = defaultdict(list)
+    groups = defaultdict(dict)  # n일전 → {x: [값, …]} (행이 시각 순이라 x도 시각 순)
     for r in rows:
         v = _slot_value(metric, r)
-        x = r["target_date"] if daily else f"{r['target_date']}T{r['slot']}:00"
-        leads[r["lead_days"]].append([x, None if v is None else round(v, 3)])
-    return {"daily": daily, "leads": {str(k): v for k, v in sorted(leads.items())}}
+        x = r["target_date"] if daily else f"{r['target_date']}T{int(r['slot']) // hours * hours:02d}:00"
+        values = groups[r["lead_days"]].setdefault(x, [])
+        if v is not None:
+            values.append(v)
+    rule = WITHIN_DAY_RULE[metric]
+    leads = {str(n): [[x, round(rule(vs), 3) if vs else None] for x, vs in xs.items()]
+             for n, xs in sorted(groups.items())}
+    return {"daily": daily, "leads": leads}
 
 
 def clamp_range(start, end, max_days=400):

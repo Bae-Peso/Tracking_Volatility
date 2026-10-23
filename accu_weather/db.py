@@ -19,7 +19,7 @@ CREATE TABLE IF NOT EXISTS city (
 
 CREATE TABLE IF NOT EXISTS weather (
   target_date  TEXT    NOT NULL,      -- 날짜 '2026-10-24' (도시 현지)
-  slot         TEXT    NOT NULL,      -- '00','03',…,'21' 또는 'day'(하루 통합)
+  slot         TEXT    NOT NULL,      -- '00','01',…,'23' 또는 'day'(하루 통합)
   city_id      TEXT    NOT NULL REFERENCES city(city_id),
   lead_days    INTEGER NOT NULL,      -- n일전 예보 (0~14)
   weather      INTEGER,               -- 날씨 카테고리 1~6

@@ -86,7 +86,7 @@ class RunTest(unittest.TestCase):
     def test_저장하고_오늘_날짜_정확도_계산(self):
         run_at(self.conn, TOKYO_22)  # 오늘은 기온 10도
         n_slots = self.conn.execute("SELECT COUNT(*) FROM weather WHERE slot != 'day'").fetchone()[0]
-        self.assertEqual(n_slots, 120)
+        self.assertEqual(n_slots, 360)
         acc = [tuple(r) for r in self.conn.execute("SELECT target_date, lead_days, temp_max_diff, score FROM accuracy")]
         # 오늘(10/23)에 대한 3일 전 예보만 d0와 비교됨. 온도 (2+2)/2/5 = 0.4 × 0.25 → 90점
         self.assertEqual(acc, [("2026-10-23", 3, 2.0, 90.0)])
