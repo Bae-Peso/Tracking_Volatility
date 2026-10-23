@@ -190,6 +190,20 @@ class FlowTest(SetupCase):
         self.assertTrue(any("60x18" in t for t in scr.history))
 
 
+class DockerModeTest(SetupCase):
+    """컨테이너 안(ACCU_WEATHER_DOCKER=1): crontab 대신 수집 컨테이너 안내, run.sh는 부르지 않음."""
+
+    def test_crontab_대신_컨테이너_안내(self):
+        keys = ["\n", "\n", "\n", *typed("Osaka"), "\n", "\n", "\t", "\t", "\n", "\n", "\n"]
+        with mock.patch.object(setup_tui, "IN_DOCKER", True):
+            result, scr = self.run_setup(keys)
+        self.assertEqual(self.cities(), [("Osaka", "Japan")])
+        subprocess.run.assert_not_called()
+        self.assertIn("docker compose up -d", result["cron"])
+        self.assertIn(TEXT["ko"]["finish_docker"], scr.history)
+        self.assertNotIn(setup_tui.CRON_LINE, scr.history)
+
+
 class UnregisterTest(SetupCase):
     """이미 등록된 도시를 선택 목록에서 Del → 1 수집 중단 / 2 완전 삭제. 설치할 때 적용."""
 

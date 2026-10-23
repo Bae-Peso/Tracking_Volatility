@@ -4,6 +4,7 @@
     python3 -m accu_weather setup                   # 설치 TUI (언어 → 소개 → 자동 실행 안내 → 도시 추가 → 설치)
     python3 -m accu_weather collect                 # 현지 22시가 지난 도시만 받음 (cron 30분 간격)
     python3 -m accu_weather collect --force         # 시각과 상관없이 모든 활성 도시를 받음
+    python3 -m accu_weather serve                   # 상주 실행: 매 :00/:30에 collect (Docker용, cron 대신)
     python3 -m accu_weather recompute [--city <id>] # 정확도 전체 재계산 (기준값·가중치를 바꾼 뒤)
     python3 -m accu_weather city add "Osaka"        # 영어 이름으로 검색, 후보를 번호로 선택
     python3 -m accu_weather city add "Osaka" --lat 34.70 --lon 135.50   # 좌표 직접 지정
@@ -37,6 +38,13 @@ def cmd_setup(conn, cfg, args):
     from . import setup_tui  # curses는 setup에서만 불러옴
 
     setup_tui.main(conn)
+
+
+def cmd_serve(conn, cfg, args):
+    from . import scheduler
+
+    conn.close()  # 실행할 때마다 새로 연다
+    scheduler.serve(cfg)
 
 
 def cmd_recompute(conn, cfg, args):
@@ -141,6 +149,9 @@ def build_parser():
     c.add_argument("--force", action="store_true", help="시각·중복 확인 없이 바로 받음")
     c.add_argument("--city", action="append", metavar="ID", help="이 도시만 (여러 번 지정 가능)")
     c.set_defaults(func=cmd_collect)
+
+    c = sub.add_parser("serve", help="상주 실행 (매 :00/:30에 collect, Docker용)")
+    c.set_defaults(func=cmd_serve)
 
     c = sub.add_parser("recompute", help="정확도 전체 재계산")
     c.add_argument("--city", metavar="ID", help="이 도시만")

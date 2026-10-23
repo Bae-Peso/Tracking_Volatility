@@ -1,0 +1,21 @@
+# docker compose up -d --build                   수집 시작 (재부팅 후 자동 재시작)
+# docker compose logs -f collector               로그
+# docker compose run --rm collector setup        설치 TUI (도시 추가·등록 취소)
+# docker compose run --rm collector city list    그 밖의 명령 (collect --force, recompute …)
+services:
+  collector:
+    build: .
+    image: accu-weather:latest
+    restart: unless-stopped
+    # data/ 에 쓰는 사용자 = 호스트 사용자. 처음 한 번: printf 'UID=%s\nGID=%s\n' "$(id -u)" "$(id -g)" > .env
+    user: "${UID:-1000}:${GID:-1000}"
+    volumes:
+      - ./data:/app/data                                        # DB (호스트의 data/ 그대로)
+      - ./config.toml:/app/config.toml:ro                       # 고친 뒤 재시작하면 반영
+      - ./weather_code.json:/app/weather_code.json:ro
+      - ./weather_severity.json:/app/weather_severity.json:ro
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"

@@ -5,8 +5,9 @@
 - v3: 도시별 현지 22시 수집(cron 30분 간격), city_id UUID
 - v4: 정확도를 "날짜 × n일전" 한 줄씩(d0와 비교)으로 바꾸고 월별·연도별로 n일전끼리 평균, error_log 추가
 - v5: 설치 TUI(`setup`, 도시 추가·등록 취소), 백업 방향(rsync / 클라우드), 조회 단위(일별 / 주·월·연 평균)
+- v6: Docker 이전 (수집 컨테이너가 `serve`로 30분마다 직접 실행, crontab 불필요)
 
-버전 : 0.3 (1~4단계 + recompute + 설치 TUI)
+버전 : 0.4 (1~4단계 + recompute + 설치 TUI + Docker)
 
 ---
 
@@ -16,7 +17,7 @@
 - 같은 날짜·시간대에 대해 "14일 전, 13일 전 … 당일"에 각각 뭐라고 예보했는지 쌓는다.
 - 정확도는 실측과의 비교가 아니라 **예보가 얼마나 자주·크게 바뀌었는지(변동성)** 로 본다.
   → "n일 전 예보가 다음 날 바뀔 확률" 정도를 1년간 모아서 보는 것이 목적. 엄밀한 정밀도는 필요 없음.
-- NAS PC에서 cron + bash + Python + SQLite로 무인 가동한다.
+- NAS PC(일반 리눅스)에서 Docker 컨테이너 + Python + SQLite로 무인 가동한다 (7.6). Docker 없이 cron + bash로도 돌릴 수 있다.
 - SQLite의 사용 이유는 `https://minitistics.tistory.com/48` 를 참조하여 적합하다 판단함.
 
 ### v1 → v2 변경 요약
@@ -376,12 +377,15 @@ python3 -m accu_weather city export / import    # cities.txt (탭 구분, city_i
 accu_weather/
 ├─ PLAN.md
 ├─ config.toml            # 수집 시각·기간, 정확도 가중치·기준값, 경로
-├─ run.sh                 # cron 진입점
+├─ run.sh                 # cron 진입점 (Docker 없이 돌릴 때)
+├─ Dockerfile             # 수집기 이미지 (ENTRYPOINT python3 -m accu_weather, CMD serve)
+├─ compose.yaml           # collector 서비스 (웹은 6단계에서 추가)
 ├─ cities.txt             # city export/import 파일
 ├─ weather_code.json      # WMO 코드 → 카테고리, 이름
 ├─ weather_severity.json  # WMO 코드 → (x, y) 좌표
 ├─ accu_weather/
-│   ├─ __main__.py        # setup / collect / recompute / city
+│   ├─ __main__.py        # setup / collect / serve / recompute / city
+│   ├─ scheduler.py       # serve: 매 :00/:30에 collect (Docker용, cron 대신)
 │   ├─ setup_tui.py       # 설치 TUI (curses)
 │   ├─ setup_text.py      # 설치 TUI 문구 (ko / en / ja)
 │   ├─ config.py          # config.toml 읽기
@@ -429,6 +433,8 @@ accu_weather/
 
 ### 7.5 웹 조회 (예정)
 
+(아래 7.6 Docker 다음 단계. compose에 web 서비스로 추가한다.)
+
 - nginx로 HTTP 포트를 열고, 뒤에서 **Flask** 앱이 SQLite를 **읽기 전용**으로 조회해 보여준다. 수집(쓰기)은 지금처럼 cron만 한다.
 - "표준 라이브러리만" 원칙은 수집 쪽(`accu_weather/`)에만 적용한다. Flask는 웹 앱에만 쓴다.
 - 기존 코드는 그대로 두고 웹 앱을 옆에 추가한다. 기존 코드에 필요한 변경은 WAL 모드 한 줄 정도.
@@ -441,6 +447,39 @@ accu_weather/
 
 ---
 
+### 7.6 Docker
+
+일반 리눅스 PC에 Docker Engine + compose 플러그인만 있으면 된다 (NAS 전용 기능 불필요).
+
+| 항목 | 방식 |
+|---|---|
+| 이미지 | `python:3.13-slim` + `tzdata`(pip, zoneinfo용). 코드·JSON·config를 담고 `ENTRYPOINT python3 -m accu_weather`, 기본 `CMD serve` |
+| 스케줄 | 컨테이너 안에 cron 없음. `serve`가 시작 직후 한 번, 그 뒤 매 :00/:30에 collect. 받을 도시만 받는 판단은 그대로 |
+| 재시작 | `restart: unless-stopped` → 컴퓨터를 다시 켜도 자동 재개 |
+| 데이터 | `./data`를 그대로 연결 (기존 DB 그대로 사용, 옮길 필요 없음). config.toml·JSON은 읽기 전용으로 연결 → 고친 뒤 재시작 |
+| 권한 | `user: UID:GID` → data/ 파일 주인이 호스트 사용자 그대로. `.env`에 `UID=$(id -u)`, `GID=$(id -g)` (이 PC는 1003, 기본값 1000이면 data/에 못 씀) |
+| 로그 | 표준 출력 → `docker compose logs collector` (10MB × 3개로 회전). 실패는 error_log에도 |
+| 종료 | `docker stop`의 SIGTERM을 받으면 바로 끝냄 (PID 1은 핸들러가 없으면 무시하므로 직접 처리) |
+| 설치 TUI | `docker compose run --rm collector setup`. 컨테이너 안에서는 crontab 대신 수집 컨테이너를 안내 (`ACCU_WEATHER_DOCKER=1`) |
+
+```bash
+docker compose up -d --build                 # 수집 시작
+docker compose logs -f collector             # 로그
+docker compose run --rm collector setup      # 설치 TUI (도시 추가·등록 취소)
+docker compose run --rm collector city list  # 그 밖의 명령 (collect --force, recompute …)
+docker compose run --rm collector city export data/cities.txt   # 컨테이너 안 /app 은 사라지므로 data/ 에
+```
+
+**호스트 cron → Docker 이전 순서**
+
+1. Docker Engine + compose 플러그인 설치 (https://docs.docker.com/engine/install/)
+2. `printf 'UID=%s\nGID=%s\n' "$(id -u)" "$(id -g)" > .env` — 컨테이너가 data/ 에 쓸 수 있게
+3. `./run.sh uninstall` — 호스트 crontab의 수집 줄 제거 (둘이 같이 돌지 않게)
+4. `docker compose up -d --build`
+5. `docker compose logs collector`에 `serve: collect every 30 min`이 보이면 끝. 다음 현지 22시에 `saved …` 줄이 찍힌다.
+
+되돌리기: `docker compose down` 후 `./run.sh install`. 데이터는 같은 `data/`라서 그대로 이어진다.
+
 ## 8. 단계별 진행
 
 | 단계 | 내용 | 완료 기준 |
@@ -449,7 +488,8 @@ accu_weather/
 | 2 | ✅ run.sh + crontab 등록 (`./run.sh install`, 30분 간격, 도시별 현지 22시 판단) | **가능한 빨리 가동** (강수확률·가시거리는 과거 데이터로 소급 불가) |
 | 3 | ✅ 하루 통합 | 22시 실행 후 `slot='day'` 행 생성 |
 | 4 | 정확도 (n일전 vs d0) + error_log + 테스트 | ✅ 구현. 가동 다음 날부터 1일전 행이 생기고, 15일 뒤 1~14일전이 다 참 |
-| 5 | recompute ✅ + 설치 TUI ✅ + 백업 (7.4) | 백업 위치 정하고 run.sh에 연결 |
+| 5 | recompute ✅ + 설치 TUI ✅ + 백업 (7.4) | 백업 위치 정하고 수집 뒤에 연결 |
+| 5.5 | Docker 이전 (7.6) | `docker compose up -d` 후 현지 22시 수집이 logs에 찍힘 |
 | 6 | 웹 조회 (nginx + Flask, 7.5, 보류) | 브라우저에서 "n일전 → n−1일전 변경 확률" 표 확인 |
 | 선택 | wttr.in 어댑터, 실제 관측값 비교 | 필요해지면 |
 
@@ -466,7 +506,9 @@ accu_weather/
 - 테스트: `python3 -m unittest`
 - 설치: `python3 -m accu_weather setup` (curses TUI, 언어 → 소개 → 자동 실행 안내 → 도시 추가 → 설치)
 - 백업: 저장 직후 `.backup` 사본 → rsync(다른 드라이브) 또는 클라우드, 세부는 미정
-- 웹: 추후 Flask (보류)
+- 실행 환경: 일반 리눅스 PC + Docker. 수집 컨테이너가 직접 30분마다 실행 (7.6)
+- 작업 순서: Docker 먼저, 그다음 웹(compose에 서비스 추가)
+- 웹: Flask, 공개 범위는 미정 → 우선 집 안 기준, 나중에 인증을 붙일 수 있게
 
 남은 것 (기본값으로 진행해도 됨):
 

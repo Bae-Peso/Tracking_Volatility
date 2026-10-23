@@ -19,6 +19,8 @@ from .sources import openmeteo
 MIN_W, MIN_H = 60, 18
 STEPS = 5
 CRON_LINE = f"*/30 * * * *  {config.ROOT / 'run.sh'}"  # run.sh install이 등록하는 줄과 같음
+IN_DOCKER = os.environ.get("ACCU_WEATHER_DOCKER") == "1"  # Dockerfile이 설정. crontab 대신 serve 컨테이너가 수집
+DOCKER_UP = "docker compose up -d"
 
 ENTER = ("\n", "\r", curses.KEY_ENTER)
 ESC = "\x1b"
@@ -383,8 +385,8 @@ class Setup:
                     for n, line in enumerate(lines):
                         self.put(y + 1 + n, 4, f"· {line}", attr)
                     y += len(lines) + 2
-                self.put(y, 2, self.t("finish_cron"), curses.A_BOLD)
-                self.put(y + 1, 4, CRON_LINE)
+                self.put(y, 2, self.t("finish_docker" if IN_DOCKER else "finish_cron"), curses.A_BOLD)
+                self.put(y + 1, 4, DOCKER_UP if IN_DOCKER else CRON_LINE)
             k = self.scr.get_wch()
             if self.nav(k):
                 return self.nav(k)
@@ -404,6 +406,9 @@ class Setup:
                 result["added"] += 1
             except sqlite3.IntegrityError:  # 그새 다른 곳에서 등록됨
                 pass
+        if IN_DOCKER:
+            result["cron"] = self.t("done_docker", up=DOCKER_UP)
+            return result
         r = subprocess.run(["bash", str(config.ROOT / "run.sh"), "install"], capture_output=True, text=True)
         result["cron"] = (self.t("done_cron") if r.returncode == 0
                           else self.t("done_cron_failed", e=(r.stderr or r.stdout).strip()))
@@ -426,7 +431,8 @@ class Setup:
         screens = [
             self.screen_lang,
             lambda: self.screen_text(2, "intro_title", "intro_body"),
-            lambda: self.screen_text(3, "cron_title", "cron_body", line=CRON_LINE),
+            lambda: (self.screen_text(3, "cron_title", "cron_body_docker", up=DOCKER_UP) if IN_DOCKER
+                     else self.screen_text(3, "cron_title", "cron_body", line=CRON_LINE)),
             self.screen_cities,
             self.screen_finish,
         ]

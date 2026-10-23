@@ -8,9 +8,24 @@
 ## 요구 사항
 
 - Python 3.11+ (표준 라이브러리만 사용, 설치 화면은 `curses`)
-- cron, `flock`, `timeout` (리눅스 기본)
+- Docker로 돌리면 위 둘 다 이미지 안에 있다. Docker 없이 돌리면 cron, `flock`, `timeout` (리눅스 기본)
 
-## 시작하기
+## 시작하기 (Docker, 권장)
+
+일반 리눅스 PC에 Docker Engine과 compose 플러그인이 있으면 된다.
+
+```bash
+printf 'UID=%s\nGID=%s\n' "$(id -u)" "$(id -g)" > .env   # 컨테이너가 data/ 에 쓸 수 있게 (처음 한 번)
+docker compose run --rm collector setup      # 설치 TUI: 언어 → 소개 → 자동 실행 안내 → 도시 추가 → 설치
+docker compose up -d --build                 # 수집 컨테이너 시작 (재부팅 후 자동 재시작)
+docker compose logs -f collector             # 로그
+```
+
+컨테이너가 시작 직후와 매 :00/:30마다 현지 22시가 지났고 오늘 아직 받지 않은 도시만 받는다 (crontab 불필요).
+데이터는 호스트의 `data/`에 그대로 쌓인다. 그 밖의 명령은 `docker compose run --rm collector <명령>` (아래 "명령"의 `python3 -m accu_weather` 대신).
+호스트 cron으로 돌리던 것을 옮길 때는 먼저 `./run.sh uninstall` (PLAN.md 7.6).
+
+## 시작하기 (Docker 없이)
 
 ```bash
 python3 -m accu_weather setup
@@ -34,6 +49,7 @@ python3 -m accu_weather city export [path]                          # 도시 목
 python3 -m accu_weather city import [path]                          # cities.txt → 도시 목록
 
 python3 -m accu_weather collect [--force] [--city <id>]             # 수동 수집 (--force: 시각 무시)
+python3 -m accu_weather serve                                       # 상주 실행: 매 :00/:30에 collect (Docker 기본 명령)
 python3 -m accu_weather recompute [--city <id>]                     # 정확도 전체 재계산 (config 변경 후)
 
 ./run.sh install | uninstall                                        # crontab 등록 / 해제
