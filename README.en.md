@@ -19,7 +19,7 @@ and the web viewer shows the daily results as they are, or compares the same lea
 ## Features
 
 - **Collection**: fetches each city's 15-day forecast (hourly) at local 22:00 and stores it as hourly slots plus a daily summary. On failure it retries 30 minutes later and logs the error
-- **Accuracy**: for each date × lead (1–14 days before), the difference from the same-day forecast (temperature, feels-like temperature, precipitation probability, precipitation, weather) and an overall score
+- **Accuracy**: for each date × lead (1–14 days before), the difference from the same-day forecast (temperature, feels-like temperature, precipitation probability, precipitation, weather) and an overall score. About scoring, I organized the document at [here](/docs/SCORING.en.md).
 - **Web viewer** (read-only)
   - Calendar: week (same day + 14 lead values), month (a 14-cell color strip per date), year (color relative to the other days of that year)
   - Day view: how far each forecast from 14 days before → the day itself was from the same-day forecast (chart / table)
