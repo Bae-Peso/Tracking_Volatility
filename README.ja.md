@@ -12,7 +12,8 @@
 日付ごとに「n日前（1〜14）の予報が当日22時の予報とどれだけ違ったか」をスコアとして残し、
 Web 画面で日別にそのまま見たり、週・月・年ごとに同じ n日前どうしで比較したりできます。
 
-<img width="2364" height="1393" alt="Web 画面のスクリーンショット" src="https://github.com/user-attachments/assets/10a2e63a-a5e6-46e0-85fd-e5164954eea7" />
+<img width="2306" height="1327" alt="{E17EC107-BAD0-4116-B4FC-33DE79E383C3}" src="https://github.com/user-attachments/assets/32da26bd-03be-4aa3-a4a9-5d7eeb0c3a5c" />
+
 
 **上の画像はデータが蓄積される前の、以前のバージョンのものです。現在のバージョンとは画面構成が異なる場合があります。**
 
