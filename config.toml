@@ -6,7 +6,9 @@ forecast_days = 15    # 오늘 + 14일 (Open-Meteo 최대 16)
 
 [accuracy]
 temp_worst_c = 5.0    # d0와 평균 이만큼(℃) 이상 다르면 기온·체감온도 항목 최악
-rain_worst_mm = 10.0  # 0mm ↔ 이만큼 차이(로그 척도)면 강수량 항목 최악
+rain_worst_mm = 10.0  # 0mm ↔ 이만큼 차이(제곱근 척도)면 강수량 항목 최악
+block_hours = 3       # 날씨·강수확률을 같은 시각끼리 비교할 때 몇 시간씩 묶을지 (24의 약수)
+peak_share = 0.5      # 날씨·강수확률 = 이 비율 × 하루 대표값 차이 + 나머지 × 시간대별 차이 평균
 weights = { temp = 0.2, feel = 0.2, prob = 0.2, rain = 0.2, weather = 0.2 }  # 합계 1 (feel = 체감온도)
 # 바꾼 뒤: python3 -m accu_weather recompute
 

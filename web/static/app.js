@@ -122,7 +122,7 @@ function leadLabel(n) {
 }
 
 // ---------- 색 ----------
-// 변동 정도(0~1)는 초록 → 노랑 → 빨강 (OKLab에서 보간). n일 전 선은 --lead-ramp 순서형 색.
+// 변동 정도(0~1)는 초록 → 노랑 → 빨강 (OKLab에서 보간). n일 전 선은 --lead-colors 7색.
 
 function hexToRgb(hex) {
   const n = parseInt(hex.trim().slice(1), 16);
@@ -165,11 +165,11 @@ function withAlpha(hex, a) {
   return `rgba(${r}, ${g}, ${b}, ${a})`;
 }
 function leadColor(n) {
-  if (n === 0) return css("--d0"); // 당일(기준)은 n일 전 색들과 겹치지 않는 주황
-  const ramp = css("--lead-ramp").split(",").map((s) => s.trim());
-  return rampAt(ramp, (n - 1) / 13);
+  if (n === 0) return css("--d0"); // 당일(기준)은 무채색 굵은 선
+  const colors = css("--lead-colors").split(",").map((s) => s.trim());
+  return colors[Math.floor((n - 1) / 2)]; // 1·2일 전, 3·4일 전 … 이 같은 색
 }
-// 바로 옆 n일 전끼리 색이 비슷하므로 짝수 n일 전은 점선 (선 모양으로 한 번 더 구분)
+// 같은 색인 짝(1·2일 전 …)은 선 모양으로 구분: 짝수 n일 전은 점선
 const leadDash = (n) => (n > 0 && n % 2 === 0 ? [6, 4] : []);
 
 // ---------- 숫자 ----------

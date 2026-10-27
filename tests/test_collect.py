@@ -101,6 +101,23 @@ class RunTest(unittest.TestCase):
         self.assertEqual(accuracy.recompute(self.conn, c), 1)
         self.assertEqual(self.conn.execute("SELECT score FROM accuracy").fetchone()[0], 60.0)
 
+    def test_정확도는_1시간_슬롯도_씀(self):
+        # 오늘 예보는 하루 내내 강수확률 80%, 3일 전 예보는 0~5시만 80% → 하루 최대는 같음
+        three_days_ago = TODAY - timedelta(days=3)
+        data = hourly_data(three_days_ago, 15, temp=12.0)
+        probs = data["hourly"]["precipitation_probability"]
+        for i, t in enumerate(data["hourly"]["time"]):
+            if t.startswith(TODAY.isoformat()) and int(t[11:13]) < 6:
+                probs[i] = 80
+        old = openmeteo.to_slots(data, self.osaka, three_days_ago, "2026-10-20T13:00:00+00:00")
+        db.upsert_weather(self.conn, old + day_rows(old))
+        clock, utc = fake_clock(TOKYO_22)
+        with clock, utc, mock.patch("builtins.print"), \
+                mock.patch.object(openmeteo, "fetch", lambda cities, n: [hourly_data(TODAY, n, prob=80) for _ in cities]):
+            collect.run(self.conn, cfg())
+        prob, hourly = self.conn.execute("SELECT precip_prob_diff, precip_prob_hourly_diff FROM accuracy").fetchone()
+        self.assertEqual((prob, hourly), (0, 60.0))  # 3시간 묶음 8개 중 6개가 0 ↔ 80
+
     def test_fetch_실패는_error_log에_남음(self):
         clock, utc = fake_clock(TOKYO_22)
         failing = mock.patch.object(openmeteo, "fetch", side_effect=urllib.error.URLError("503"))
@@ -116,6 +133,8 @@ class MigrateTest(unittest.TestCase):
     def test_예전_스키마에_체감온도_열을_더하고_날씨_열_이름을_바꿈(self):
         old = (db.SCHEMA.replace("  feel_max     REAL,", "").replace("  feel_min     REAL,", "")
                .replace("  feel_max_diff    REAL,", "").replace("  feel_min_diff    REAL,", "")
+               .replace("  precip_prob_hourly_diff REAL,", "")
+               .replace("precip_sqrt_diff REAL", "precip_log_diff  REAL")
                .replace("weather_diff     REAL", "weather_severity REAL"))
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "old.sqlite3"
@@ -128,8 +147,11 @@ class MigrateTest(unittest.TestCase):
             conn = db.connect(path)
             cols = {t: {r["name"] for r in conn.execute(f"PRAGMA table_info({t})")} for t in ("weather", "accuracy")}
             self.assertLessEqual({"feel_max", "feel_min"}, cols["weather"])
-            self.assertLessEqual({"feel_max_diff", "feel_min_diff", "weather_diff"}, cols["accuracy"])
+            self.assertLessEqual({"feel_max_diff", "feel_min_diff", "weather_diff", "precip_prob_hourly_diff"},
+                                 cols["accuracy"])
             self.assertNotIn("weather_severity", cols["accuracy"])
+            self.assertIn("precip_sqrt_diff", cols["accuracy"])
+            self.assertNotIn("precip_log_diff", cols["accuracy"])
             self.assertEqual(conn.execute("SELECT weather_diff FROM accuracy").fetchone()[0], 0.2)  # 값은 그대로
             conn.close()
             db.connect(path).close()  # 두 번 열어도 그대로
