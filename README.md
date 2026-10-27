@@ -13,7 +13,8 @@
 웹 화면에서 일별로 그대로 보거나 주별·월별·연도별로 같은 n일 전끼리 비교한다.
 
 <!-- 스크린샷: 실데이터가 쌓이면 추가 (월간 달력, 일간 보기, 4분할 그래프) -->
-<img width="2364" height="1393" alt="image" src="https://github.com/user-attachments/assets/10a2e63a-a5e6-46e0-85fd-e5164954eea7" />
+<img width="2306" height="1328" alt="{68E63BDE-6212-4CBA-921F-729F3C4E2C24}" src="https://github.com/user-attachments/assets/82615414-01df-4389-ad8c-0ff410e86cf2" />
+
 
 **위 사진은 아직 데이터가 축적되기 이전 및 이전 버전의 사진으로 현재 버전과 보이는 구조에 차이가 있을 수 있습니다.**
 
