@@ -128,10 +128,15 @@ def _diff(a, b, scale=1):
     return None if a is None or b is None else round((a - b) / scale, 3)
 
 
-def compare(d0, f, acc_cfg):
-    """n일전 하루 예보 f를 d0와 비교. 차이는 n일전 − d0 (+면 높게 예보)."""
-    (row,) = accuracy.accuracy_rows([d0, f], acc_cfg, "")
+def compare(by_lead, acc_cfg, slots=None):
+    """한 날짜의 n일전 하루 예보들을 d0와 비교 → {n: 차이}. 차이는 n일전 − d0 (+면 높게 예보). d0가 없으면 {}.
+    slots: {n: 1시간 슬롯 행} (날씨·강수확률의 시간대별 비교, accuracy와 같음)."""
+    d0 = by_lead.get(0)
+    return {row["lead_days"]: _view(row, d0, by_lead[row["lead_days"]])
+            for row in accuracy.accuracy_rows(list(by_lead.values()), acc_cfg, "", slots)}
 
+
+def _view(row, d0, f):
     def r3(v):
         return None if v is None else round(v, 3)
 
@@ -144,8 +149,9 @@ def compare(d0, f, acc_cfg):
         "feel_max": r3(row["feel_max_diff"]),
         "feel_min": r3(row["feel_min_diff"]),
         "precip_prob": row["precip_prob_diff"],
+        "precip_prob_hourly": r3(row["precip_prob_hourly_diff"]),
         "precip": _diff(f["precip_mm"], d0["precip_mm"]),
-        "precip_log": r3(row["precip_log_diff"]),
+        "precip_sqrt": r3(row["precip_sqrt_diff"]),
         "wind": _diff(f["wind_kmh"], d0["wind_kmh"]),
         "visibility": _diff(f["visibility_m"], d0["visibility_m"], 1000),
     }
@@ -159,10 +165,10 @@ def badness(metric, c, acc_cfg):
         v = c["weather"]
     elif metric in ("temp_max", "temp_min", "feel_max", "feel_min"):
         v = None if c[metric] is None else abs(c[metric]) / acc_cfg["temp_worst_c"]
-    elif metric == "precip_prob":
-        v = None if c["precip_prob"] is None else abs(c["precip_prob"]) / 100
+    elif metric == "precip_prob":  # 점수와 같은 값: 하루 최대 차이와 시간대별 차이를 섞음
+        v = None if c["precip_prob"] is None else accuracy.mix(abs(c["precip_prob"]), c["precip_prob_hourly"], acc_cfg) / 100
     elif metric == "precip":
-        v = None if c["precip_log"] is None else abs(c["precip_log"]) / math.log1p(acc_cfg["rain_worst_mm"])
+        v = None if c["precip_sqrt"] is None else abs(c["precip_sqrt"]) / math.sqrt(acc_cfg["rain_worst_mm"])
     else:
         raise ValueError(metric)
     return None if v is None else round(max(0.0, min(1.0, v)), 3)
@@ -180,6 +186,19 @@ def _day_forecasts(conn, city_id, start, end):
     return by_date
 
 
+def _slot_forecasts(conn, city_id, start, end):
+    """{target_date: {lead_days: [1시간 슬롯 행]}} (날씨·강수확률 비교에 쓰는 열만)."""
+    by_date = defaultdict(lambda: defaultdict(list))
+    rows = conn.execute(
+        "SELECT target_date, lead_days, slot, weather_code, precip_prob FROM weather "
+        "WHERE city_id = ? AND slot != 'day' AND source = ? AND target_date BETWEEN ? AND ?",
+        (city_id, SOURCE, start, end),
+    )
+    for r in rows:
+        by_date[r["target_date"]][r["lead_days"]].append(r)
+    return by_date
+
+
 def _d0_value(metric, d0):
     """주간 표 '당일' 열에 보여줄 실제 예보 값. 점수·날씨 변동성은 기준 자신이라 없음."""
     return {"temp_max": d0["temp_max"], "temp_min": d0["temp_min"], "feel_max": d0["feel_max"],
@@ -192,18 +211,19 @@ def calendar(conn, city_id, start, end, metric, acc_cfg):
     if metric not in CALENDAR_METRICS:
         raise ValueError(metric)
     days = {}
+    slots = _slot_forecasts(conn, city_id, start, end)
     for target, by_lead in _day_forecasts(conn, city_id, start, end).items():
         d0 = by_lead.get(0)
         if d0 is None:
             continue
+        compared = compare(by_lead, acc_cfg, slots.get(target))
         values, bad = [], []
         for lead in LEADS:
-            f = by_lead.get(lead)
-            if f is None:
+            c = compared.get(lead)
+            if c is None:
                 values.append(None)
                 bad.append(None)
                 continue
-            c = compare(d0, f, acc_cfg)
             values.append(c[metric])
             bad.append(badness(metric, c, acc_cfg))
         days[target] = {
@@ -218,6 +238,7 @@ def calendar(conn, city_id, start, end, metric, acc_cfg):
 def day(conn, city_id, target, acc_cfg):
     """일간 모달: 14일전 → 당일 순으로 예보 값, d0와의 차이, 점수. d0가 없으면 차이는 None."""
     by_lead = _day_forecasts(conn, city_id, target, target).get(target, {})
+    compared = compare(by_lead, acc_cfg, _slot_forecasts(conn, city_id, target, target).get(target))
     d0 = by_lead.get(0)
     leads = []
     for lead in range(14, -1, -1):
@@ -230,7 +251,7 @@ def day(conn, city_id, target, acc_cfg):
         elif lead == 0:  # 기준 자신: 차이 0
             c = {**{k: 0 for k in DAY_METRICS}, "weather_match": 1, "score": None}
         else:
-            c = compare(d0, f, acc_cfg)
+            c = compared[lead]
         leads.append({
             "lead": lead,
             "available": True,

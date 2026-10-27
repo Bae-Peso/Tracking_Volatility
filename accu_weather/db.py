@@ -45,13 +45,14 @@ CREATE TABLE IF NOT EXISTS accuracy (
   lead_days        INTEGER NOT NULL,      -- 1~14
   source           TEXT    NOT NULL DEFAULT 'open-meteo',
   weather_match    INTEGER,               -- 날씨 카테고리가 d0와 같으면 1, 다르면 0
-  weather_diff     REAL,                  -- |가중치 − 가중치(d0)|, 0~1 (weather_weight.json)
+  weather_diff     REAL,                  -- 0~1: 대표 날씨 가중치 차이와 시간대별 가중치 차이를 섞은 값 (weather_weight.json)
   temp_max_diff    REAL,                  -- n일전 − d0 ℃ (+면 높게 예보)
   temp_min_diff    REAL,
   feel_max_diff    REAL,                  -- 체감온도 n일전 − d0 ℃
   feel_min_diff    REAL,
-  precip_prob_diff INTEGER,               -- n일전 − d0 %p
-  precip_log_diff  REAL,                  -- log1p(n일전 mm) − log1p(d0 mm)
+  precip_prob_diff INTEGER,               -- n일전 − d0 %p (하루 최대)
+  precip_prob_hourly_diff REAL,           -- 같은 시각끼리 |n일전 − d0| %p의 평균 (block_hours 묶음)
+  precip_sqrt_diff REAL,                  -- √(n일전 mm) − √(d0 mm)
   score            REAL,                  -- 0~100, 높을수록 d0와 가까움
   computed_at      TEXT    NOT NULL,
   PRIMARY KEY (city_id, target_date, lead_days, source)
@@ -70,6 +71,7 @@ CREATE TABLE IF NOT EXISTS error_log (
 ADDED_COLUMNS = [
     ("weather", "feel_max", "REAL"), ("weather", "feel_min", "REAL"),
     ("accuracy", "feel_max_diff", "REAL"), ("accuracy", "feel_min_diff", "REAL"),
+    ("accuracy", "precip_prob_hourly_diff", "REAL"),
 ]
 
 CITY_COLS = ["city_id", "name", "country", "latitude", "longitude", "timezone", "active", "added_at"]
@@ -100,6 +102,8 @@ def _migrate(conn):
     with conn:
         if "weather_severity" in columns("accuracy"):
             conn.execute("ALTER TABLE accuracy RENAME COLUMN weather_severity TO weather_diff")
+        if "precip_log_diff" in columns("accuracy"):  # 강수량 로그 척도 → 제곱근 척도 (값은 recompute로)
+            conn.execute("ALTER TABLE accuracy RENAME COLUMN precip_log_diff TO precip_sqrt_diff")
         for table, col, decl in ADDED_COLUMNS:
             if col not in columns(table):
                 conn.execute(f"ALTER TABLE {table} ADD COLUMN {col} {decl}")
@@ -176,6 +180,15 @@ def day_forecasts(conn, city_id, target_date, source):
     return conn.execute(
         "SELECT * FROM weather WHERE city_id = ? AND target_date = ? AND slot = 'day' AND source = ? "
         "ORDER BY lead_days",
+        (city_id, target_date, source),
+    ).fetchall()
+
+
+def slot_forecasts(conn, city_id, target_date, source):
+    """한 날짜의 1시간 슬롯 예보 전부 (날씨·강수확률을 시간대별로 비교할 때)."""
+    return conn.execute(
+        "SELECT lead_days, slot, weather_code, precip_prob FROM weather "
+        "WHERE city_id = ? AND target_date = ? AND slot != 'day' AND source = ?",
         (city_id, target_date, source),
     ).fetchall()
 

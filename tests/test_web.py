@@ -79,11 +79,31 @@ class CalendarTest(WebDB):
             return queries.calendar(self.conn, self.city, "2026-11-01", "2026-11-01", metric, ACC)["2026-11-01"]["bad"][2]
 
         self.assertAlmostEqual(bad("precip_prob"), 0.6)
-        self.assertAlmostEqual(bad("precip"), round(math.log1p(10) / math.log1p(ACC["rain_worst_mm"]), 3))
+        self.assertAlmostEqual(bad("precip"), round(math.sqrt(10) / math.sqrt(ACC["rain_worst_mm"]), 3))
         self.assertAlmostEqual(bad("weather"), 0.35)  # 맑음(0) ↔ 약한 비(가중치 0.35)
         self.assertAlmostEqual(bad("feel_max"), 3 / ACC["temp_worst_c"])  # 체감도 기온처럼 차이 / 기준값
         score = queries.calendar(self.conn, self.city, "2026-11-01", "2026-11-01", "score", ACC)["2026-11-01"]
         self.assertEqual(score["bad"][2], round(min(1, (100 - score["values"][2]) / 50), 3))
+
+    def test_날씨와_강수확률은_1시간_슬롯도_비교(self):
+        # 11/5: 하루 대표는 둘 다 강한 비·80%. d0는 0~17시 비·0~11시 80%, 1일전은 0~2시 비·6~17시 80%
+        conn = db.connect(self.path)
+        rows = [row(self.city, "2026-11-05", lead, code=65, prob=80) for lead in (0, 1)]
+        for lead, rain, wet in ((0, range(18), range(12)), (1, range(3), range(6, 18))):
+            rows += [row(self.city, "2026-11-05", lead, slot=f"{h:02d}", code=65 if h in rain else 3,
+                         prob=80 if h in wet else 0) for h in range(24)]
+        db.upsert_weather(conn, rows)
+        conn.close()
+
+        def first(metric):
+            d = queries.calendar(self.conn, self.city, "2026-11-05", "2026-11-05", metric, ACC)["2026-11-05"]
+            return d["values"][0], d["bad"][0]
+
+        self.assertEqual(first("weather"), (0.125, 0.125))  # 0.5 × 0 + 0.5 × (5묶음 × 0.4 / 8)
+        self.assertEqual(first("precip_prob"), (0, 0.2))  # 값은 하루 최대 차이, 색은 0.5 × 0 + 0.5 × 40%p
+        lead1 = next(l for l in queries.day(self.conn, self.city, "2026-11-05", ACC)["leads"] if l["lead"] == 1)
+        self.assertEqual(lead1["diffs"]["weather"], 0.125)
+        self.assertEqual(lead1["score"], 100 * (1 - 0.2 * (0.125 + 0.2)))
 
     def test_없는_항목은_오류(self):
         with self.assertRaises(ValueError):
