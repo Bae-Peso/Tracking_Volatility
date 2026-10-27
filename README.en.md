@@ -12,7 +12,7 @@ Every day at **22:00 local time in each city**, it fetches a 15-day forecast for
 For each date it scores "how far the n-days-before forecast (1–14) was from that day's 22:00 forecast",
 and the web viewer shows the daily results as they are, or compares the same lead across weeks, months and years.
 
-<img width="2364" height="1393" alt="Web viewer screenshot" src="https://github.com/user-attachments/assets/10a2e63a-a5e6-46e0-85fd-e5164954eea7" />
+<img width="2304" height="1325" alt="{0D6F9126-F9A8-4DF2-8924-1E7AA31353A0}" src="https://github.com/user-attachments/assets/1b1b8a3e-2aab-4617-8a1d-1a6b23f40946" />
 
 **This screenshot was taken before data had accumulated and on an earlier version, so the layout may differ from the current version.**
 
